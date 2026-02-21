@@ -63,7 +63,7 @@ export async function fetchPlayRecords(
   const params = new URLSearchParams({
     repo: did,
     collection: "fm.teal.alpha.feed.play",
-    limit: "50",
+    limit: "100",
   });
   if (cursor) params.set("cursor", cursor);
 
@@ -76,6 +76,25 @@ export async function fetchPlayRecords(
     throw new Error("Failed to fetch records from PDS");
   }
   return res.json();
+}
+
+export async function fetchAllPlayRecords(
+  did: string,
+  maxRecords = 5000,
+  onBatch?: (records: PlayRecord[], total: number) => void
+): Promise<PlayRecord[]> {
+  const all: PlayRecord[] = [];
+  let cursor: string | undefined;
+
+  while (all.length < maxRecords) {
+    const res = await fetchPlayRecords(did, cursor);
+    all.push(...res.records);
+    onBatch?.(all, all.length);
+    cursor = res.cursor;
+    if (!cursor || res.records.length === 0) break;
+  }
+
+  return all;
 }
 
 const artCache = new Map<string, string | null>();
