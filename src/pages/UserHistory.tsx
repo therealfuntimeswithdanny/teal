@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { resolveHandle, fetchPlayRecords, PlayRecord } from "@/lib/atproto";
+import { resolveHandle, fetchAllPlayRecords, PlayRecord } from "@/lib/atproto";
 import PlayCard from "@/components/PlayCard";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -13,21 +13,21 @@ export default function UserHistory() {
   const [records, setRecords] = useState<PlayRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [cursor, setCursor] = useState<string | undefined>();
-  const [did, setDid] = useState<string | null>(null);
+  const [loadingProgress, setLoadingProgress] = useState(0);
 
   const search = useCallback(async (searchHandle: string) => {
     if (!searchHandle.trim()) return;
     setLoading(true);
     setError("");
     setRecords([]);
-    setCursor(undefined);
+    setLoadingProgress(0);
     try {
       const resolved = searchHandle.startsWith("did:") ? searchHandle : await resolveHandle(searchHandle);
-      setDid(resolved);
-      const res = await fetchPlayRecords(resolved);
-      setRecords(res.records);
-      setCursor(res.cursor);
+      const all = await fetchAllPlayRecords(resolved, 5000, (_records, total) => {
+        setRecords([..._records]);
+        setLoadingProgress(total);
+      });
+      setRecords(all);
     } catch (e: any) {
       setError(e.message ?? "Something went wrong");
     } finally {
@@ -48,20 +48,6 @@ export default function UserHistory() {
       navigate(`/user/${encodeURIComponent(handle.trim())}`, { replace: true });
     }
   };
-
-  const loadMore = useCallback(async () => {
-    if (!did || !cursor) return;
-    setLoading(true);
-    try {
-      const res = await fetchPlayRecords(did, cursor);
-      setRecords((prev) => [...prev, ...res.records]);
-      setCursor(res.cursor);
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [did, cursor]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -94,6 +80,12 @@ export default function UserHistory() {
           </Button>
         </form>
 
+        {loading && loadingProgress > 0 && (
+          <p className="mb-4 text-center text-sm text-muted-foreground">
+            Loading… {loadingProgress} plays fetched
+          </p>
+        )}
+
         {error && (
           <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">
             {error}
@@ -117,15 +109,7 @@ export default function UserHistory() {
           ))}
         </div>
 
-        {cursor && records.length > 0 && (
-          <div className="mt-6 text-center">
-            <Button variant="secondary" onClick={loadMore} disabled={loading}>
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Load more"}
-            </Button>
-          </div>
-        )}
-
-        {records.length > 0 && !cursor && (
+        {records.length > 0 && !loading && (
           <p className="mt-6 text-center text-xs text-muted-foreground">
             {records.length} plays loaded
           </p>

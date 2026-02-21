@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
-import { resolveHandle, fetchPlayRecords, PlayRecord } from "@/lib/atproto";
+import { resolveHandle, fetchAllPlayRecords, PlayRecord } from "@/lib/atproto";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, Disc3, ArrowLeft, Music, Clock, Users, Disc } from "lucide-react";
@@ -9,46 +9,33 @@ export default function StatsPage() {
   const { handle } = useParams<{ handle: string }>();
   const [records, setRecords] = useState<PlayRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
-  const [cursor, setCursor] = useState<string | undefined>();
-  const [did, setDid] = useState<string | null>(null);
-
-  const fetchAll = useCallback(async () => {
-    if (!handle) return;
-    setLoading(true);
-    setError("");
-    try {
-      const resolved = handle.startsWith("did:") ? handle : await resolveHandle(handle);
-      setDid(resolved);
-      const res = await fetchPlayRecords(resolved);
-      setRecords(res.records);
-      setCursor(res.cursor);
-    } catch (e: any) {
-      setError(e.message ?? "Something went wrong");
-    } finally {
-      setLoading(false);
-    }
-  }, [handle]);
-
-  const loadMore = useCallback(async () => {
-    if (!did || !cursor) return;
-    setLoadingMore(true);
-    try {
-      const res = await fetchPlayRecords(did, cursor);
-      setRecords((prev) => [...prev, ...res.records]);
-      setCursor(res.cursor);
-    } catch {
-      // silently stop
-      setCursor(undefined);
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [did, cursor]);
+  const [loadingProgress, setLoadingProgress] = useState(0);
 
   useEffect(() => {
-    fetchAll();
-  }, [fetchAll]);
+    if (!handle) return;
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setError("");
+      setLoadingProgress(0);
+      try {
+        const resolved = handle.startsWith("did:") ? handle : await resolveHandle(handle);
+        const all = await fetchAllPlayRecords(resolved, 5000, (_records, total) => {
+          if (!cancelled) {
+            setRecords([..._records]);
+            setLoadingProgress(total);
+          }
+        });
+        if (!cancelled) setRecords(all);
+      } catch (e: any) {
+        if (!cancelled) setError(e.message ?? "Something went wrong");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [handle]);
 
   const stats = useMemo(() => {
     if (records.length === 0) return null;
@@ -116,15 +103,21 @@ export default function StatsPage() {
               Listening Stats
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              {handle} · {records.length} plays loaded
+              {handle} · {records.length} plays loaded{loading ? "…" : ""}
             </p>
           </div>
         </div>
 
-        {loading && (
+        {loading && records.length === 0 && (
           <div className="flex justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
           </div>
+        )}
+
+        {loading && loadingProgress > 0 && (
+          <p className="mb-4 text-center text-sm text-muted-foreground">
+            Loading… {loadingProgress} plays fetched
+          </p>
         )}
 
         {error && (
@@ -243,14 +236,6 @@ export default function StatsPage() {
               </CardContent>
             </Card>
 
-            {/* Load more for better stats */}
-            {cursor && (
-              <div className="text-center">
-                <Button variant="secondary" onClick={loadMore} disabled={loadingMore}>
-                  {loadingMore ? <Loader2 className="h-4 w-4 animate-spin" /> : "Load more plays for better stats"}
-                </Button>
-              </div>
-            )}
           </div>
         )}
       </div>
