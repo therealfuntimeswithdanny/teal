@@ -30,10 +30,36 @@ export async function resolveHandle(handle: string): Promise<string> {
   return data.did;
 }
 
+async function resolvePds(did: string): Promise<string> {
+  let doc: any;
+  if (did.startsWith("did:plc:")) {
+    const res = await fetch(`https://plc.directory/${did}`);
+    if (!res.ok) throw new Error("Could not resolve DID document");
+    doc = await res.json();
+  } else if (did.startsWith("did:web:")) {
+    const domain = did.replace("did:web:", "");
+    const res = await fetch(`https://${domain}/.well-known/did.json`);
+    if (!res.ok) throw new Error("Could not resolve DID document");
+    doc = await res.json();
+  } else {
+    throw new Error("Unsupported DID method");
+  }
+
+  const pdsService = doc.service?.find(
+    (s: any) => s.id === "#atproto_pds" || s.type === "AtprotoPersonalDataServer"
+  );
+  if (!pdsService?.serviceEndpoint) {
+    throw new Error("No PDS endpoint found for this user");
+  }
+  return pdsService.serviceEndpoint;
+}
+
 export async function fetchPlayRecords(
   did: string,
   cursor?: string
 ): Promise<ListRecordsResponse> {
+  const pds = await resolvePds(did);
+
   const params = new URLSearchParams({
     repo: did,
     collection: "fm.teal.alpha.feed.play",
@@ -42,9 +68,13 @@ export async function fetchPlayRecords(
   if (cursor) params.set("cursor", cursor);
 
   const res = await fetch(
-    `${BSKY_PUBLIC_API}/xrpc/com.atproto.repo.listRecords?${params}`
+    `${pds}/xrpc/com.atproto.repo.listRecords?${params}`
   );
-  if (!res.ok) throw new Error("Failed to fetch records");
+  if (!res.ok) {
+    const text = await res.text();
+    console.error("listRecords error:", res.status, text);
+    throw new Error("Failed to fetch records from PDS");
+  }
   return res.json();
 }
 
