@@ -60,28 +60,28 @@ export default function UserHistory() {
              teal.fm Play History
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            View AT Protocol listening history
+            View teal.fm plays for anyone on the AT Protocol (Bluesky)
+
+<
+
+
+
+
+
+
+        
           </p>
         </div>
 
         <form onSubmit={handleSubmit} className="mb-8 flex gap-2">
-          <Input
-            value={handle}
-            onChange={(e) => setHandle(e.target.value)}
-            placeholder="handle.bsky.social"
-            className="flex-1 bg-card border-border" />
+          <Input value={handle} onChange={(e) => setHandle(e.target.value)} placeholder="handle.bsky.social" className="flex-1 bg-card border-border" />
 
           <Button type="submit" disabled={loading || !handle.trim()}>
-            {loading && records.length === 0 ?
-            <Loader2 className="h-4 w-4 animate-spin" /> :
-
-            "Fetch"
-            }
+            {loading && records.length === 0 ? <Loader2 className="h-4 w-4 animate-spin" /> : "Fetch"}
           </Button>
         </form>
 
-        {loading && loadingProgress > 0 &&
-        <p className="mb-4 text-center text-sm text-muted-foreground">
+        {loading && loadingProgress > 0 && <p className="mb-4 text-center text-sm text-muted-foreground">
             Loading… {loadingProgress} plays fetched
           </p>
         }
