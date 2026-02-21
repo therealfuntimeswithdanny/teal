@@ -20,16 +20,16 @@ function formatTime(iso?: string) {
 }
 
 export default function PlayCard({ record }: { record: PlayRecord }) {
-  const { trackName, artists, releaseName, duration, playedTime, originUrl } =
-    record.value;
-  const artistName = artists?.map((a) => a.artistName).join(", ") ?? "Unknown";
+  const { trackName, artists, releaseName, duration, playedTime, originUrl, releaseMbId } =
+    record.value as any;
+  const artistName = artists?.map((a: any) => a.artistName).join(", ") ?? "Unknown";
   const [art, setArt] = useState<string | null>(null);
 
   useEffect(() => {
     if (trackName && artistName) {
-      fetchAlbumArt(trackName, artistName).then(setArt);
+      fetchAlbumArt(trackName, artistName, releaseName, releaseMbId).then(setArt);
     }
-  }, [trackName, artistName]);
+  }, [trackName, artistName, releaseName, releaseMbId]);
 
   return (
     <a
