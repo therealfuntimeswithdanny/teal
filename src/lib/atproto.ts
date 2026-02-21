@@ -82,24 +82,52 @@ const artCache = new Map<string, string | null>();
 
 export async function fetchAlbumArt(
   trackName: string,
-  artistName: string
+  artistName: string,
+  releaseName?: string,
+  releaseMbId?: string
 ): Promise<string | null> {
-  const key = `${artistName}-${trackName}`;
+  const key = `${artistName}-${releaseName || trackName}`;
   if (artCache.has(key)) return artCache.get(key)!;
 
-  try {
-    const res = await fetch(
-      `https://itunes.apple.com/search?term=${encodeURIComponent(
-        `${artistName} ${trackName}`
-      )}&media=music&limit=1`
-    );
-    const data = await res.json();
-    const url =
-      data.results?.[0]?.artworkUrl100?.replace("100x100", "300x300") ?? null;
-    artCache.set(key, url);
-    return url;
-  } catch {
-    artCache.set(key, null);
-    return null;
+  // Try MusicBrainz Cover Art Archive first if we have a release MBID
+  if (releaseMbId) {
+    try {
+      const url = `https://coverartarchive.org/release/${releaseMbId}/front-250`;
+      const res = await fetch(url, { method: "HEAD" });
+      if (res.ok || res.redirected) {
+        artCache.set(key, url);
+        return url;
+      }
+    } catch {
+      // fall through
+    }
   }
+
+  // Fallback: search MusicBrainz for the release, then get cover art
+  try {
+    const query = releaseName
+      ? `release:${releaseName} AND artist:${artistName}`
+      : `recording:${trackName} AND artist:${artistName}`;
+    const mbRes = await fetch(
+      `https://musicbrainz.org/ws/2/release/?query=${encodeURIComponent(query)}&limit=1&fmt=json`,
+      { headers: { "User-Agent": "TealPlayHistory/1.0 (lovable.dev)" } }
+    );
+    if (mbRes.ok) {
+      const mbData = await mbRes.json();
+      const mbid = mbData.releases?.[0]?.id;
+      if (mbid) {
+        const coverUrl = `https://coverartarchive.org/release/${mbid}/front-250`;
+        const coverRes = await fetch(coverUrl, { method: "HEAD" });
+        if (coverRes.ok || coverRes.redirected) {
+          artCache.set(key, coverUrl);
+          return coverUrl;
+        }
+      }
+    }
+  } catch {
+    // fall through
+  }
+
+  artCache.set(key, null);
+  return null;
 }
