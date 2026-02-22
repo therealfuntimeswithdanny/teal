@@ -209,7 +209,7 @@ export default function StatsPage() {
     clearAuthError();
     setOauthPending(true);
     try {
-      await signIn(trimmed, `/user/${encodeURIComponent(trimmed)}/stats`);
+      await signIn(trimmed, `/${encodeURIComponent(trimmed)}`);
     } finally {
       setOauthPending(false);
     }
@@ -327,10 +327,10 @@ export default function StatsPage() {
       <header className="sticky top-0 z-20 border-b border-border/50 bg-background/90 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
           <div className="flex items-center gap-3">
-            <Link to={`/user/${encodeURIComponent(routeHandle ?? "")}`}>
+            <Link to="/">
               <Button variant="ghost" size="sm" className="gap-2">
                 <ArrowLeft className="h-4 w-4" />
-                History
+                Home
               </Button>
             </Link>
             <div className="flex items-center gap-2">

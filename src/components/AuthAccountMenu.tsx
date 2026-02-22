@@ -63,13 +63,10 @@ export default function AuthAccountMenu({ lastSyncedAt }: { lastSyncedAt?: strin
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm">Account</Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-72">
+              <DropdownMenuContent align="end" className="w-72">
               <DropdownMenuLabel>Current account</DropdownMenuLabel>
-              <DropdownMenuItem onClick={() => navigate(`/user/${encodeURIComponent(sessionDid)}`)}>
-                My history
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => navigate(`/user/${encodeURIComponent(sessionDid)}/stats`)}>
-                My stats
+              <DropdownMenuItem onClick={() => navigate(`/${encodeURIComponent(sessionDid)}`)}>
+                My profile
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuLabel>Switch account</DropdownMenuLabel>

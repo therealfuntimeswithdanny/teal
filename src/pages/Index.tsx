@@ -30,7 +30,7 @@ export default function Index() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (handle.trim()) {
-      navigate(`/user/${encodeURIComponent(handle.trim())}`);
+      navigate(`/${encodeURIComponent(handle.trim())}`);
     }
   };
 
@@ -39,7 +39,7 @@ export default function Index() {
     clearAuthError();
     setOauthPending(true);
     try {
-      await signIn(handle.trim(), `/user/${encodeURIComponent(handle.trim())}`);
+      await signIn(handle.trim(), `/${encodeURIComponent(handle.trim())}`);
     } finally {
       setOauthPending(false);
     }
@@ -96,17 +96,9 @@ export default function Index() {
               <Button
                 type="button"
                 size="sm"
-                onClick={() => navigate(`/user/${encodeURIComponent(sessionDid)}`)}
+                onClick={() => navigate(`/${encodeURIComponent(sessionDid)}`)}
               >
-                My history
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => navigate(`/user/${encodeURIComponent(sessionDid)}/stats`)}
-              >
-                My stats
+                My profile
               </Button>
               <Button type="button" size="sm" variant="outline" onClick={signOut}>
                 Sign out

@@ -37,7 +37,7 @@ export default function OAuthCallback() {
     }
 
     if (sessionDid) {
-      navigate(`/user/${encodeURIComponent(sessionDid)}`, { replace: true });
+      navigate(`/${encodeURIComponent(sessionDid)}`, { replace: true });
       return;
     }
 
