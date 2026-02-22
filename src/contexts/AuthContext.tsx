@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { getOAuthClient } from "@/lib/oauth";
+import { ATPROTO_OAUTH_ORIGIN, getOAuthClient } from "@/lib/oauth";
 
 interface AuthContextValue {
   initializing: boolean;
@@ -63,6 +63,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     setAuthError(null);
+
+    if (typeof window !== "undefined") {
+      const currentOrigin = window.location.origin;
+      if (ATPROTO_OAUTH_ORIGIN && ATPROTO_OAUTH_ORIGIN !== currentOrigin) {
+        const returnTo = state
+          ? new URL(state, currentOrigin).toString()
+          : window.location.href;
+        const startUrl = new URL("/oauth/start", ATPROTO_OAUTH_ORIGIN);
+        startUrl.searchParams.set("handle", normalized);
+        startUrl.searchParams.set("return_to", returnTo);
+        window.location.assign(startUrl.toString());
+        return;
+      }
+    }
+
     try {
       const client = await getOAuthClient();
       await client.signInRedirect(normalized, {

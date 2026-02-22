@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
 import UserHistory from "./pages/UserHistory";
 import StatsPage from "./pages/StatsPage";
+import OAuthStart from "./pages/OAuthStart";
 import OAuthCallback from "./pages/OAuthCallback";
 import NotFound from "./pages/NotFound";
 import { AuthProvider } from "@/contexts/AuthContext";
@@ -21,6 +22,7 @@ const App = () => (
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<Index />} />
+            <Route path="/oauth/start" element={<OAuthStart />} />
             <Route path="/oauth/callback" element={<OAuthCallback />} />
             <Route path="/user/:handle" element={<UserHistory />} />
             <Route path="/user/:handle/stats" element={<StatsPage />} />

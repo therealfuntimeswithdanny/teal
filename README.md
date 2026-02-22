@@ -76,22 +76,34 @@ Steps:
 2. In Vercel, click **Add New Project** and import the repo.
 3. Keep the detected framework as **Vite**.
 4. Add any required environment variables:
-   - `VITE_ATPROTO_CLIENT_ID` (default: `https://teal-stats.blueat.net/oauth/client-metadata.json`)
+   - `VITE_APP_ORIGIN` (for example: `https://teal-stats.madebydanny.uk`)
+   - `VITE_ATPROTO_OAUTH_ORIGIN` (for example: `https://your-project-name.vercel.app`)
+   - `VITE_ATPROTO_CLIENT_ID` (for example: `https://your-project-name.vercel.app/oauth/client-metadata.json`)
+   - `VITE_ATPROTO_REDIRECT_URI` (for example: `https://your-project-name.vercel.app/oauth/callback`)
    - `VITE_ATPROTO_HANDLE_RESOLVER` (default: `https://bsky.social`)
+   - `VITE_ATPROTO_ALLOWED_RETURN_ORIGINS` (comma-separated origins allowed after OAuth callback)
    - `VITE_LASTFM_API_KEY` (optional; only needed for Last.fm art fallback)
 5. Deploy.
 
 ### AT Protocol OAuth setup
 
-OAuth is configured for the production domain:
+OAuth metadata is generated at build time (`npm run oauth:metadata` / `prebuild`).
 
-- Client metadata URL: `https://teal-stats.blueat.net/oauth/client-metadata.json`
-- Callback URL: `https://teal-stats.blueat.net/oauth/callback`
+For this setup:
+
+- App domain: `https://teal-stats.madebydanny.uk`
+- OAuth domain: `https://your-project-name.vercel.app`
+- Client metadata URL: `https://your-project-name.vercel.app/oauth/client-metadata.json`
+- Callback URL: `https://your-project-name.vercel.app/oauth/callback`
+
+Note: browser OAuth session storage is origin-scoped. With this bridge setup,
+the persisted OAuth session is stored on the OAuth origin (`*.vercel.app`),
+then the user is redirected back to the app origin (`teal-stats.madebydanny.uk`).
 
 Make sure both paths are reachable after deploy (they are provided by:
 
 - `public/oauth/client-metadata.json`
-- the React route `/oauth/callback`)
+- the React routes `/oauth/start` and `/oauth/callback`)
 
 If you still see this OAuth error:
 
@@ -99,8 +111,8 @@ If you still see this OAuth error:
 - `Forbidden sec-fetch-site header "same-site"`
 
 your app origin is considered "same-site" with the auth server/PDS. This is
-rejected by the server. Using `teal-stats.blueat.net` with a PDS on
-`rose.madebydanny.uk` should avoid this.
+rejected by the server. Using a Vercel domain for OAuth with your app hosted on
+`teal-stats.madebydanny.uk` avoids that by making the OAuth requests cross-site.
 
 ### Deploy with Lovable
 

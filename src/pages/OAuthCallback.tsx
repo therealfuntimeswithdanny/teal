@@ -2,6 +2,12 @@ import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { ATPROTO_ALLOWED_RETURN_ORIGINS } from "@/lib/oauth";
+
+function isAllowedReturnOrigin(url: URL): boolean {
+  const origin = url.origin.replace(/\/$/, "");
+  return ATPROTO_ALLOWED_RETURN_ORIGINS.includes(origin);
+}
 
 export default function OAuthCallback() {
   const { initializing, sessionDid, authError, callbackState } = useAuth();
@@ -10,9 +16,28 @@ export default function OAuthCallback() {
   useEffect(() => {
     if (initializing) return;
 
+    if (sessionDid && callbackState) {
+      if (callbackState.startsWith("/")) {
+        navigate(callbackState, { replace: true });
+        return;
+      }
+
+      try {
+        const external = new URL(callbackState);
+        if (isAllowedReturnOrigin(external)) {
+          if (!external.searchParams.has("did")) {
+            external.searchParams.set("did", sessionDid);
+          }
+          window.location.assign(external.toString());
+          return;
+        }
+      } catch {
+        // fall through to default route
+      }
+    }
+
     if (sessionDid) {
-      const destination = callbackState?.startsWith("/") ? callbackState : `/user/${encodeURIComponent(sessionDid)}`;
-      navigate(destination, { replace: true });
+      navigate(`/user/${encodeURIComponent(sessionDid)}`, { replace: true });
       return;
     }
 
