@@ -18,8 +18,8 @@ const redirectUri = process.env.VITE_ATPROTO_REDIRECT_URI || `${oauthOrigin}/oau
 const metadata = {
   client_id: clientId,
   client_name: "teal.fm stats",
-  client_uri: appOrigin,
-  logo_uri: `${appOrigin}/favicon.ico`,
+  client_uri: oauthOrigin,
+  logo_uri: `${oauthOrigin}/favicon.ico`,
   redirect_uris: [redirectUri],
   scope: "atproto transition:generic",
   grant_types: ["authorization_code", "refresh_token"],

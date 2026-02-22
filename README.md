@@ -95,6 +95,7 @@ For this setup:
 - OAuth domain: `https://your-project-name.vercel.app`
 - Client metadata URL: `https://your-project-name.vercel.app/oauth/client-metadata.json`
 - Callback URL: `https://your-project-name.vercel.app/oauth/callback`
+- Metadata `client_uri` must be on the same origin as `client_id` (AT Protocol requirement). The generator now sets both to the OAuth origin.
 
 Note: browser OAuth session storage is origin-scoped. With this bridge setup,
 the persisted OAuth session is stored on the OAuth origin (`*.vercel.app`),
