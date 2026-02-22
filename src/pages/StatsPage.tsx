@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,6 +6,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import PlayCard from "@/components/PlayCard";
 import { usePlayRecords } from "@/hooks/use-play-records";
 import { useAuth } from "@/contexts/AuthContext";
 import AuthAccountMenu from "@/components/AuthAccountMenu";
@@ -16,6 +18,13 @@ import {
   hasActivePlayFilters,
   PlayFilters,
 } from "@/lib/playFilters";
+import {
+  fetchPinRecords,
+  fetchPublicProfile,
+  type PinRecord,
+  type PublicProfile,
+  resolvePdsEndpoint,
+} from "@/lib/atproto";
 import { Loader2, Disc3, ArrowLeft, Music, Clock, Users, Disc } from "lucide-react";
 import {
   BarChart,
@@ -29,13 +38,58 @@ import {
   Area,
 } from "recharts";
 
+interface ProfilePin {
+  id: string;
+  type: "album" | "song";
+  title: string;
+  subtitle?: string;
+}
+
+function parsePinRecord(pin: PinRecord): ProfilePin | null {
+  const value = pin.value ?? {};
+  const rawType = [value.pinType, value.kind, value.type].filter(Boolean).join(" ").toLowerCase();
+
+  const artistFromList = value.artists
+    ?.map((artist) => artist.artistName ?? artist.name)
+    .filter(Boolean)
+    .join(", ");
+  const artist = value.artistName ?? artistFromList;
+
+  const trackTitle = value.trackName ?? value.songName;
+  const albumTitle = value.releaseName ?? value.albumName;
+
+  let type: "album" | "song";
+  if (rawType.includes("album")) {
+    type = "album";
+  } else if (rawType.includes("song") || rawType.includes("track")) {
+    type = "song";
+  } else if (albumTitle && !trackTitle) {
+    type = "album";
+  } else {
+    type = "song";
+  }
+
+  const title = type === "album"
+    ? (albumTitle ?? value.title ?? value.text)
+    : (trackTitle ?? value.title ?? value.text);
+
+  if (!title) return null;
+
+  return {
+    id: pin.uri,
+    type,
+    title,
+    subtitle: artist,
+  };
+}
+
 export default function StatsPage() {
   const { handle: routeHandle } = useParams<{handle: string;}>();
-  const [showAllArtists, setShowAllArtists] = useState(false);
-  const [showAllTracks, setShowAllTracks] = useState(false);
-  const [showAllAlbums, setShowAllAlbums] = useState(false);
   const [filters, setFilters] = useState<PlayFilters>({ ...EMPTY_PLAY_FILTERS });
   const [oauthPending, setOauthPending] = useState(false);
+  const [profile, setProfile] = useState<PublicProfile | null>(null);
+  const [pinnedFromRepo, setPinnedFromRepo] = useState<ProfilePin[]>([]);
+  const [pinsLoading, setPinsLoading] = useState(false);
 
   const {
     initializing: authInitializing,
@@ -51,8 +105,6 @@ export default function StatsPage() {
     preferences,
     ready: preferencesReady,
     setSavedFilters,
-    togglePinnedArtist,
-    togglePinnedAlbum,
   } = useUserPreferences(isAuthenticated ? sessionDid : null);
 
   const {
@@ -65,6 +117,7 @@ export default function StatsPage() {
     setShowPartialResults,
     lastSyncedAt,
     cancelFetch,
+    resolvedDid,
   } = usePlayRecords(routeHandle);
 
   useEffect(() => {
@@ -78,8 +131,77 @@ export default function StatsPage() {
     setSavedFilters("stats", filters);
   }, [filters, isAuthenticated, preferencesReady, sessionDid, setSavedFilters]);
 
-  const pinnedArtists = preferences.pinnedArtists;
-  const pinnedAlbums = preferences.pinnedAlbums;
+  useEffect(() => {
+    let cancelled = false;
+    const actor = resolvedDid ?? routeHandle?.trim();
+    if (!actor) {
+      setProfile(null);
+      return;
+    }
+
+    void (async () => {
+      const next = await fetchPublicProfile(actor);
+      if (!cancelled) {
+        setProfile(next);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [resolvedDid, routeHandle]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!resolvedDid) {
+      setPinnedFromRepo([]);
+      return;
+    }
+
+    void (async () => {
+      setPinsLoading(true);
+      try {
+        const pds = await resolvePdsEndpoint(resolvedDid);
+        const allPins: PinRecord[] = [];
+        let cursor: string | undefined;
+
+        while (true) {
+          const response = await fetchPinRecords(resolvedDid, cursor, { pds });
+          allPins.push(...(response.records as PinRecord[]));
+          if (!response.cursor || response.records.length === 0) break;
+          cursor = response.cursor;
+        }
+
+        if (cancelled) return;
+
+        const deduped = new Set<string>();
+        const parsed = allPins
+          .map(parsePinRecord)
+          .filter((pin): pin is ProfilePin => Boolean(pin))
+          .filter((pin) => {
+            const key = `${pin.type}:${pin.title.toLowerCase()}:${pin.subtitle?.toLowerCase() ?? ""}`;
+            if (deduped.has(key)) return false;
+            deduped.add(key);
+            return true;
+          });
+
+        setPinnedFromRepo(parsed);
+      } catch {
+        if (!cancelled) {
+          setPinnedFromRepo([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setPinsLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [resolvedDid]);
 
   const handleOAuthSignIn = async () => {
     const trimmed = routeHandle?.trim();
@@ -111,7 +233,6 @@ export default function StatsPage() {
     if (filteredRecords.length === 0) return null;
 
     const artistCounts = new Map<string, number>();
-    const trackCounts = new Map<string, {count: number;artist: string;}>();
     const albumCounts = new Map<string, {count: number;artist: string;}>();
     let totalDuration = 0;
 
@@ -121,13 +242,8 @@ export default function StatsPage() {
     for (const record of filteredRecords) {
       const value = record.value;
       const artist = value.artists?.map((artistItem) => artistItem.artistName).join(", ") ?? "Unknown";
-      const trackName = value.trackName ?? "Untitled";
 
       artistCounts.set(artist, (artistCounts.get(artist) ?? 0) + 1);
-
-      const trackKey = `${trackName} — ${artist}`;
-      const existingTrack = trackCounts.get(trackKey);
-      trackCounts.set(trackKey, { count: (existingTrack?.count ?? 0) + 1, artist });
 
       if (value.releaseName) {
         const albumKey = `${value.releaseName} — ${artist}`;
@@ -148,8 +264,6 @@ export default function StatsPage() {
     }
 
     const topArtists = [...artistCounts.entries()].sort((a, b) => b[1] - a[1]);
-    const topTracks = [...trackCounts.entries()].sort((a, b) => b[1].count - a[1].count);
-    const topAlbums = [...albumCounts.entries()].sort((a, b) => b[1].count - a[1].count);
 
     const hours = Math.floor(totalDuration / 3600);
     const minutes = Math.floor(totalDuration % 3600 / 60);
@@ -175,9 +289,6 @@ export default function StatsPage() {
     }));
 
     return {
-      topArtists,
-      topTracks,
-      topAlbums,
       hours,
       minutes,
       dailyTrend,
@@ -189,6 +300,9 @@ export default function StatsPage() {
     };
   }, [filteredRecords]);
 
+  const pinnedAlbums = pinnedFromRepo.filter((item) => item.type === "album");
+  const pinnedSongs = pinnedFromRepo.filter((item) => item.type === "song");
+
   const COLORS = [
     "hsl(var(--primary))",
     "hsl(var(--accent))",
@@ -196,68 +310,6 @@ export default function StatsPage() {
     "hsl(320 60% 55%)",
     "hsl(45 80% 55%)",
   ];
-
-  const renderList = (
-    items: [string, number | { count: number; artist: string; }][],
-    showAll: boolean,
-    type: "artist" | "track" | "album"
-  ): ReactNode => {
-    if (items.length === 0) {
-      return <p className="text-sm text-muted-foreground">No matching data.</p>;
-    }
-
-    const displayed = showAll ? items : items.slice(0, 20);
-    const first = items[0][1];
-    const maxCount = typeof first === "number" ? first : first.count;
-
-    return displayed.map(([name, data], i) => {
-      const count = typeof data === "number" ? data : data.count;
-      const width = maxCount > 0 ? count / maxCount * 100 : 0;
-      const [title, subtitle] = type !== "artist" ? name.split(" — ") : [name, null];
-      const isPinned = type === "artist"
-        ? pinnedArtists.includes(name)
-        : type === "album"
-          ? pinnedAlbums.includes(name)
-          : false;
-      return (
-        <div key={name} className="flex items-center gap-3">
-          <span className="w-6 text-right text-sm font-medium text-muted-foreground">{i + 1}</span>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-foreground">{title}</p>
-            {subtitle && <p className="truncate text-xs text-muted-foreground">{subtitle}</p>}
-            {type === "artist" &&
-            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
-                <div className="h-full rounded-full bg-primary" style={{ width: `${width}%` }} />
-              </div>
-            }
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="flex-shrink-0 text-sm text-muted-foreground">{count}</span>
-            {isAuthenticated && type === "artist" &&
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => togglePinnedArtist(name)}
-            >
-                {isPinned ? "Unpin" : "Pin"}
-              </Button>
-            }
-            {isAuthenticated && type === "album" &&
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => togglePinnedAlbum(name)}
-            >
-                {isPinned ? "Unpin" : "Pin"}
-              </Button>
-            }
-          </div>
-        </div>
-      );
-    });
-  };
 
   const customTooltipStyle = {
     backgroundColor: "hsl(var(--card))",
@@ -267,51 +319,150 @@ export default function StatsPage() {
     fontSize: "12px",
   };
 
-  return (
-    <div className="min-h-screen bg-background">
-      <div className="mx-auto max-w-3xl px-4 py-12">
-        <div className="mb-8">
-          <Link to={`/user/${encodeURIComponent(routeHandle ?? "")}`}>
-            <Button variant="ghost" size="sm" className="mb-4 gap-2">
-              <ArrowLeft className="h-4 w-4" />
-              Back to history
-            </Button>
-          </Link>
-          <div className="text-center">
-            <Disc3 className="mx-auto mb-3 h-10 w-10 animate-spin text-primary" style={{ animationDuration: "3s" }} />
-            <h1 className="text-3xl font-bold tracking-tight text-foreground">teal.fm Stats</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {routeHandle} · {filteredRecords.length} shown{filteredRecords.length !== displayRecords.length ? ` of ${displayRecords.length}` : ""} · {records.length} total loaded{loading ? "…" : ""}
-            </p>
-          </div>
-        </div>
+  const profileName = profile?.displayName || profile?.handle || routeHandle || "Profile";
+  const profileHandle = profile?.handle || routeHandle || "";
 
-        {isAuthenticated ?
-        <div className="mb-4">
-            <AuthAccountMenu lastSyncedAt={lastSyncedAt} />
-          </div> :
-        <div className="mb-4 rounded-md border border-border bg-card p-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-muted-foreground">
-                Sign in with OAuth to enable saved filters and pinned artists/albums in stats.
-              </p>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={!routeHandle?.trim() || authInitializing || oauthPending}
-                onClick={handleOAuthSignIn}
-              >
-                {oauthPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign in"}
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-background via-background to-muted/20">
+      <header className="sticky top-0 z-20 border-b border-border/50 bg-background/90 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
+          <div className="flex items-center gap-3">
+            <Link to={`/user/${encodeURIComponent(routeHandle ?? "")}`}>
+              <Button variant="ghost" size="sm" className="gap-2">
+                <ArrowLeft className="h-4 w-4" />
+                History
               </Button>
+            </Link>
+            <div className="flex items-center gap-2">
+              <Disc3 className="h-5 w-5 animate-spin text-primary" style={{ animationDuration: "3s" }} />
+              <span className="text-sm font-semibold tracking-wide">teal.fm</span>
             </div>
-            {authError &&
-            <p className="mt-2 text-sm text-destructive">{authError}</p>
-            }
           </div>
+          {isAuthenticated ?
+          <AuthAccountMenu lastSyncedAt={lastSyncedAt} /> :
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!routeHandle?.trim() || authInitializing || oauthPending}
+            onClick={handleOAuthSignIn}
+          >
+              {oauthPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign in"}
+            </Button>
+          }
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-7xl space-y-6 px-4 py-6">
+        {authError &&
+        <p className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{authError}</p>
         }
 
-        <div className="mb-4 flex flex-wrap items-center gap-4 rounded-md border border-border bg-card/40 px-3 py-2">
+        <section className="grid gap-4 lg:grid-cols-[1.2fr_2fr]">
+          <Card className="border-border/60">
+            <CardContent className="flex flex-col gap-4 p-5">
+              <div className="flex items-start gap-4">
+                <Avatar className="h-16 w-16 border border-border">
+                  <AvatarImage src={profile?.avatar} alt={profileName} />
+                  <AvatarFallback>{profileName.slice(0, 2).toUpperCase()}</AvatarFallback>
+                </Avatar>
+                <div className="min-w-0">
+                  <p className="truncate text-xl font-semibold text-foreground">{profileName}</p>
+                  <p className="truncate text-sm text-muted-foreground">@{profileHandle}</p>
+                </div>
+              </div>
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                {profile?.description || "No bio available for this profile yet."}
+              </p>
+            </CardContent>
+          </Card>
+
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Card>
+              <CardContent className="flex items-center gap-3 p-4">
+                <Clock className="h-5 w-5 flex-shrink-0 text-primary" />
+                <div>
+                  <p className="text-xl font-bold text-foreground">{stats ? `${stats.hours}h ${stats.minutes}m` : "0h 0m"}</p>
+                  <p className="text-xs text-muted-foreground">Hours Played</p>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="flex items-center gap-3 p-4">
+                <Music className="h-5 w-5 flex-shrink-0 text-primary" />
+                <div>
+                  <p className="text-xl font-bold text-foreground">{filteredRecords.length}</p>
+                  <p className="text-xs text-muted-foreground">Song Plays</p>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="flex items-center gap-3 p-4">
+                <Users className="h-5 w-5 flex-shrink-0 text-primary" />
+                <div>
+                  <p className="text-xl font-bold text-foreground">{stats?.uniqueArtists ?? 0}</p>
+                  <p className="text-xs text-muted-foreground">Artists</p>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="flex items-center gap-3 p-4">
+                <Disc className="h-5 w-5 flex-shrink-0 text-primary" />
+                <div>
+                  <p className="text-xl font-bold text-foreground">{stats?.uniqueAlbums ?? 0}</p>
+                  <p className="text-xs text-muted-foreground">Albums</p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </section>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Filters</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <Input
+                placeholder="Track contains…"
+                value={filters.track}
+                onChange={(e) => setFilters((current) => ({ ...current, track: e.target.value }))}
+              />
+              <Input
+                placeholder="Artist contains…"
+                value={filters.artist}
+                onChange={(e) => setFilters((current) => ({ ...current, artist: e.target.value }))}
+              />
+              <Input
+                placeholder="Album contains…"
+                value={filters.album}
+                onChange={(e) => setFilters((current) => ({ ...current, album: e.target.value }))}
+              />
+            </div>
+            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
+              <Input
+                type="date"
+                value={filters.dateFrom}
+                onChange={(e) => setFilters((current) => ({ ...current, dateFrom: e.target.value }))}
+              />
+              <Input
+                type="date"
+                value={filters.dateTo}
+                onChange={(e) => setFilters((current) => ({ ...current, dateTo: e.target.value }))}
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setFilters({ ...EMPTY_PLAY_FILTERS })}
+                disabled={!hasActivePlayFilters(filters)}
+              >
+                Clear filters
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="flex flex-wrap items-center gap-4 rounded-md border border-border bg-card/40 px-3 py-2">
           <div className="flex items-center gap-2">
             <Checkbox
               id="stats-partial-toggle"
@@ -335,7 +486,7 @@ export default function StatsPage() {
         </div>
 
         {loading &&
-        <div className="mb-4 rounded-md border border-border bg-card p-3">
+        <div className="rounded-md border border-border bg-card p-3">
             <div className="mb-2 flex items-center justify-between gap-3 text-sm">
               <span className="text-muted-foreground">
                 {progress.loadedCount} plays from {progress.pagesLoaded} pages
@@ -353,149 +504,66 @@ export default function StatsPage() {
           </div>
         }
 
-        <div className="mb-4 rounded-md border border-border bg-card p-3">
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            <Input
-              placeholder="Track contains…"
-              value={filters.track}
-              onChange={(e) => setFilters((current) => ({ ...current, track: e.target.value }))}
-            />
-            <Input
-              placeholder="Artist contains…"
-              value={filters.artist}
-              onChange={(e) => setFilters((current) => ({ ...current, artist: e.target.value }))}
-            />
-            <Input
-              placeholder="Album contains…"
-              value={filters.album}
-              onChange={(e) => setFilters((current) => ({ ...current, album: e.target.value }))}
-            />
-          </div>
-          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
-            <Input
-              type="date"
-              value={filters.dateFrom}
-              onChange={(e) => setFilters((current) => ({ ...current, dateFrom: e.target.value }))}
-            />
-            <Input
-              type="date"
-              value={filters.dateTo}
-              onChange={(e) => setFilters((current) => ({ ...current, dateTo: e.target.value }))}
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => setFilters({ ...EMPTY_PLAY_FILTERS })}
-              disabled={!hasActivePlayFilters(filters)}
-            >
-              Clear filters
-            </Button>
-          </div>
-        </div>
-
-        {isAuthenticated && (pinnedArtists.length > 0 || pinnedAlbums.length > 0) &&
-        <div className="mb-4 rounded-md border border-border bg-card p-3">
-            <p className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">Pinned</p>
-            <div className="flex flex-wrap gap-2">
-              {pinnedArtists.map((artist) =>
-              <Button
-                key={`stats-artist:${artist}`}
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setFilters((current) => ({ ...current, artist }))}
-              >
-                  Artist: {artist}
-                </Button>
-              )}
-              {pinnedAlbums.map((album) =>
-              <Button
-                key={`stats-album:${album}`}
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setFilters((current) => ({ ...current, album: album.split(" — ")[0] ?? album }))}
-              >
-                  Album: {album}
-                </Button>
-              )}
-            </div>
-          </div>
-        }
-
-        {loading && displayRecords.length === 0 &&
-        <div className="flex justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          </div>
-        }
-
         {error &&
-        <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</p>
+        <p className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</p>
         }
 
-        {!stats && !loading && hasActivePlayFilters(filters) && displayRecords.length > 0 &&
-        <p className="mb-4 rounded-md border border-border bg-card p-3 text-sm text-muted-foreground">
-            No plays match the current filters.
-          </p>
-        }
+        <section className="grid gap-4 md:grid-cols-2">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Pinned Albums</CardTitle>
+              <p className="text-xs text-muted-foreground">Saved in uk.madebydanny.teal.pin</p>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {pinsLoading && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+              {!pinsLoading && pinnedAlbums.length === 0 &&
+              <p className="text-sm text-muted-foreground">No pinned albums found.</p>
+              }
+              {pinnedAlbums.map((item) =>
+              <div key={item.id} className="rounded-md border border-border bg-muted/30 p-2">
+                  <p className="text-sm font-medium text-foreground">{item.title}</p>
+                  {item.subtitle && <p className="text-xs text-muted-foreground">{item.subtitle}</p>}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Pinned Songs</CardTitle>
+              <p className="text-xs text-muted-foreground">Saved in uk.madebydanny.teal.pin</p>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {pinsLoading && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+              {!pinsLoading && pinnedSongs.length === 0 &&
+              <p className="text-sm text-muted-foreground">No pinned songs found.</p>
+              }
+              {pinnedSongs.map((item) =>
+              <div key={item.id} className="rounded-md border border-border bg-muted/30 p-2">
+                  <p className="text-sm font-medium text-foreground">{item.title}</p>
+                  {item.subtitle && <p className="text-xs text-muted-foreground">{item.subtitle}</p>}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </section>
 
         {stats &&
-        <div className="space-y-6">
-            <div className="grid grid-cols-2 gap-3">
-              <Card>
-                <CardContent className="flex items-center gap-3 p-4">
-                  <Music className="h-5 w-5 flex-shrink-0 text-primary" />
-                  <div>
-                    <p className="text-2xl font-bold text-foreground">{filteredRecords.length}</p>
-                    <p className="text-xs text-muted-foreground">Total plays</p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="flex items-center gap-3 p-4">
-                  <Clock className="h-5 w-5 flex-shrink-0 text-primary" />
-                  <div>
-                    <p className="text-2xl font-bold text-foreground">
-                      {stats.hours}h {stats.minutes}m
-                    </p>
-                    <p className="text-xs text-muted-foreground">Listening time</p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="flex items-center gap-3 p-4">
-                  <Users className="h-5 w-5 flex-shrink-0 text-primary" />
-                  <div>
-                    <p className="text-2xl font-bold text-foreground">{stats.uniqueArtists}</p>
-                    <p className="text-xs text-muted-foreground">Artists</p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="flex items-center gap-3 p-4">
-                  <Disc className="h-5 w-5 flex-shrink-0 text-primary" />
-                  <div>
-                    <p className="text-2xl font-bold text-foreground">{stats.uniqueAlbums}</p>
-                    <p className="text-xs text-muted-foreground">Albums</p>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            <Tabs defaultValue="daily" className="w-full">
-              <CardHeader className="px-0 pb-3">
-                <CardTitle className="text-lg">Listening Trends</CardTitle>
+        <section>
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-lg">Graphs</CardTitle>
               </CardHeader>
-              <TabsList className="mb-4">
-                <TabsTrigger value="daily">Daily Plays</TabsTrigger>
-                <TabsTrigger value="artists">Top Artists Over Time</TabsTrigger>
-                <TabsTrigger value="bar">Artist Breakdown</TabsTrigger>
-              </TabsList>
+              <CardContent>
+                <Tabs defaultValue="daily" className="w-full">
+                  <TabsList className="mb-4">
+                    <TabsTrigger value="daily">Daily Plays</TabsTrigger>
+                    <TabsTrigger value="artists">Top Artists Over Time</TabsTrigger>
+                    <TabsTrigger value="bar">Artist Breakdown</TabsTrigger>
+                  </TabsList>
 
-              <TabsContent value="daily">
-                <Card>
-                  <CardContent className="p-4">
-                    <ResponsiveContainer width="100%" height={250}>
+                  <TabsContent value="daily">
+                    <ResponsiveContainer width="100%" height={260}>
                       <AreaChart data={stats.dailyTrend}>
                         <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                         <XAxis dataKey="date" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
@@ -511,14 +579,10 @@ export default function StatsPage() {
                         />
                       </AreaChart>
                     </ResponsiveContainer>
-                  </CardContent>
-                </Card>
-              </TabsContent>
+                  </TabsContent>
 
-              <TabsContent value="artists">
-                <Card>
-                  <CardContent className="p-4">
-                    <ResponsiveContainer width="100%" height={250}>
+                  <TabsContent value="artists">
+                    <ResponsiveContainer width="100%" height={260}>
                       <AreaChart data={stats.artistTrend}>
                         <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                         <XAxis dataKey="date" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
@@ -537,22 +601,10 @@ export default function StatsPage() {
                         )}
                       </AreaChart>
                     </ResponsiveContainer>
-                    <div className="mt-3 flex flex-wrap gap-3 text-xs">
-                      {stats.top5Artists.map((artist, i) =>
-                      <div key={artist} className="flex items-center gap-1.5">
-                          <div className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: COLORS[i] }} />
-                          <span className="max-w-[120px] truncate text-muted-foreground">{artist}</span>
-                        </div>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              </TabsContent>
+                  </TabsContent>
 
-              <TabsContent value="bar">
-                <Card>
-                  <CardContent className="p-4">
-                    <ResponsiveContainer width="100%" height={350}>
+                  <TabsContent value="bar">
+                    <ResponsiveContainer width="100%" height={320}>
                       <BarChart data={stats.artistBarData} layout="vertical" margin={{ left: 80 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                         <XAxis type="number" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
@@ -561,60 +613,43 @@ export default function StatsPage() {
                         <Bar dataKey="plays" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
-                  </CardContent>
-                </Card>
-              </TabsContent>
-            </Tabs>
-
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg">Top Artists ({stats.topArtists.length})</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {renderList(stats.topArtists, showAllArtists, "artist")}
-                {stats.topArtists.length > 20 &&
-                <Button variant="ghost" size="sm" className="mt-2 w-full" onClick={() => setShowAllArtists(!showAllArtists)}>
-                    {showAllArtists ? "Show less" : `Show all ${stats.topArtists.length}`}
-                  </Button>
-                }
+                  </TabsContent>
+                </Tabs>
               </CardContent>
             </Card>
-
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg">Top Tracks ({stats.topTracks.length})</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {renderList(stats.topTracks, showAllTracks, "track")}
-                {stats.topTracks.length > 20 &&
-                <Button variant="ghost" size="sm" className="mt-2 w-full" onClick={() => setShowAllTracks(!showAllTracks)}>
-                    {showAllTracks ? "Show less" : `Show all ${stats.topTracks.length}`}
-                  </Button>
-                }
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg">Top Albums ({stats.topAlbums.length})</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {renderList(stats.topAlbums, showAllAlbums, "album")}
-                {stats.topAlbums.length > 20 &&
-                <Button variant="ghost" size="sm" className="mt-2 w-full" onClick={() => setShowAllAlbums(!showAllAlbums)}>
-                    {showAllAlbums ? "Show less" : `Show all ${stats.topAlbums.length}`}
-                  </Button>
-                }
-              </CardContent>
-            </Card>
-
-            <p className="text-center text-xs text-muted-foreground">
-              {filteredRecords.length} shown{filteredRecords.length !== displayRecords.length ? ` of ${displayRecords.length}` : ""} · {records.length} total loaded
-              {isAuthenticated && activeAccount?.handle ? ` · ${activeAccount.handle}` : ""}
-            </p>
-          </div>
+          </section>
         }
-      </div>
+
+        <section>
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg">All Plays</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {loading && displayRecords.length === 0 &&
+              <div className="flex justify-center py-8">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
+              }
+
+              {!loading && filteredRecords.length === 0 && hasActivePlayFilters(filters) &&
+              <p className="text-sm text-muted-foreground">No plays match the current filters.</p>
+              }
+
+              {filteredRecords.map((record) =>
+              <PlayCard key={record.uri} record={record} />
+              )}
+
+              {displayRecords.length > 0 && !loading &&
+              <p className="pt-2 text-center text-xs text-muted-foreground">
+                  {filteredRecords.length} shown{filteredRecords.length !== displayRecords.length ? ` of ${displayRecords.length}` : ""} · {records.length} total loaded
+                  {isAuthenticated && activeAccount?.handle ? ` · ${activeAccount.handle}` : ""}
+                </p>
+              }
+            </CardContent>
+          </Card>
+        </section>
+      </main>
     </div>
   );
 }

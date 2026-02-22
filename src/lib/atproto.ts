@@ -25,6 +25,25 @@ export interface PublicProfile {
   handle: string;
   displayName?: string;
   avatar?: string;
+  description?: string;
+}
+
+export interface PinRecord {
+  uri: string;
+  cid: string;
+  value: {
+    pinType?: string;
+    kind?: string;
+    type?: string;
+    trackName?: string;
+    songName?: string;
+    releaseName?: string;
+    albumName?: string;
+    artists?: { artistName?: string; name?: string }[];
+    artistName?: string;
+    title?: string;
+    text?: string;
+  };
 }
 
 const BSKY_PUBLIC_API = "https://public.api.bsky.app";
@@ -54,6 +73,7 @@ export async function fetchPublicProfile(actor: string): Promise<PublicProfile |
       handle: String(data.handle),
       displayName: data.displayName ? String(data.displayName) : undefined,
       avatar: data.avatar ? String(data.avatar) : undefined,
+      description: data.description ? String(data.description) : undefined,
     };
   } catch {
     return null;
@@ -110,6 +130,31 @@ export async function fetchPlayRecords(
     const text = await res.text();
     console.error("listRecords error:", res.status, text);
     throw new Error("Failed to fetch records from PDS");
+  }
+  return res.json();
+}
+
+export async function fetchPinRecords(
+  did: string,
+  cursor?: string,
+  options: FetchPlayRecordsOptions = {}
+): Promise<ListRecordsResponse> {
+  const pds = options.pds ?? await resolvePdsEndpoint(did);
+
+  const params = new URLSearchParams({
+    repo: did,
+    collection: "uk.madebydanny.teal.pin",
+    limit: "100",
+  });
+  if (cursor) params.set("cursor", cursor);
+
+  const res = await fetch(`${pds}/xrpc/com.atproto.repo.listRecords?${params}`, {
+    signal: options.signal,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    console.error("pin listRecords error:", res.status, text);
+    throw new Error("Failed to fetch pin records from PDS");
   }
   return res.json();
 }
