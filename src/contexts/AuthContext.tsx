@@ -14,6 +14,17 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+function formatAuthError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (raw.includes('Forbidden sec-fetch-site header "same-site"')) {
+    return [
+      "AT Protocol OAuth blocked this request because your app domain is 'same-site' with the auth server.",
+      "Use a different top-level site for login (for example your `*.vercel.app` URL), then return here.",
+    ].join(" ");
+  }
+  return raw;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [initializing, setInitializing] = useState(true);
   const [sessionDid, setSessionDid] = useState<string | null>(null);
@@ -32,7 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setCallbackState(result?.state ? String(result.state) : null);
       } catch (error) {
         if (cancelled) return;
-        const message = error instanceof Error ? error.message : "Failed to initialize OAuth session.";
+        const message = formatAuthError(error);
         setAuthError(message);
       } finally {
         if (!cancelled) setInitializing(false);
@@ -52,11 +63,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     setAuthError(null);
-    const client = await getOAuthClient();
-    await client.signInRedirect(normalized, {
-      state,
-      scope: "atproto transition:generic",
-    });
+    try {
+      const client = await getOAuthClient();
+      await client.signInRedirect(normalized, {
+        state,
+        scope: "atproto transition:generic",
+      });
+    } catch (error) {
+      setAuthError(formatAuthError(error));
+      throw error;
+    }
   }, []);
 
   const signOut = useCallback(async () => {
@@ -68,7 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSessionDid(null);
       setCallbackState(null);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to sign out.";
+      const message = formatAuthError(error);
       setAuthError(message);
     }
   }, [sessionDid]);

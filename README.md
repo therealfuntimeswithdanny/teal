@@ -76,7 +76,7 @@ Steps:
 2. In Vercel, click **Add New Project** and import the repo.
 3. Keep the detected framework as **Vite**.
 4. Add any required environment variables:
-   - `VITE_ATPROTO_CLIENT_ID` (default: `https://teal-stats.madebydanny.uk/oauth/client-metadata.json`)
+   - `VITE_ATPROTO_CLIENT_ID` (default: `https://teal-stats.blueat.net/oauth/client-metadata.json`)
    - `VITE_ATPROTO_HANDLE_RESOLVER` (default: `https://bsky.social`)
    - `VITE_LASTFM_API_KEY` (optional; only needed for Last.fm art fallback)
 5. Deploy.
@@ -85,13 +85,22 @@ Steps:
 
 OAuth is configured for the production domain:
 
-- Client metadata URL: `https://teal-stats.madebydanny.uk/oauth/client-metadata.json`
-- Callback URL: `https://teal-stats.madebydanny.uk/oauth/callback`
+- Client metadata URL: `https://teal-stats.blueat.net/oauth/client-metadata.json`
+- Callback URL: `https://teal-stats.blueat.net/oauth/callback`
 
 Make sure both paths are reachable after deploy (they are provided by:
 
 - `public/oauth/client-metadata.json`
 - the React route `/oauth/callback`)
+
+If you still see this OAuth error:
+
+- `invalid_request`
+- `Forbidden sec-fetch-site header "same-site"`
+
+your app origin is considered "same-site" with the auth server/PDS. This is
+rejected by the server. Using `teal-stats.blueat.net` with a PDS on
+`rose.madebydanny.uk` should avoid this.
 
 ### Deploy with Lovable
 

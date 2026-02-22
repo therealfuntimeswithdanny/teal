@@ -1,10 +1,10 @@
 {
-  "client_id": "https://teal-stats.madebydanny.uk/oauth/client-metadata.json",
+  "client_id": "https://teal-stats.blueat.net/oauth/client-metadata.json",
   "client_name": "teal.fm stats",
-  "client_uri": "https://teal-stats.madebydanny.uk",
-  "logo_uri": "https://teal-stats.madebydanny.uk/favicon.ico",
+  "client_uri": "https://teal-stats.blueat.net",
+  "logo_uri": "https://teal-stats.blueat.net/favicon.ico",
   "redirect_uris": [
-    "https://teal-stats.madebydanny.uk/oauth/callback"
+    "https://teal-stats.blueat.net/oauth/callback"
   ],
   "scope": "atproto transition:generic",
   "grant_types": [
