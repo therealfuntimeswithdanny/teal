@@ -23,7 +23,7 @@ export default function UserHistory() {
     setLoadingProgress(0);
     try {
       const resolved = searchHandle.startsWith("did:") ? searchHandle : await resolveHandle(searchHandle);
-      const all = await fetchAllPlayRecords(resolved, 5000, (_records, total) => {
+      const all = await fetchAllPlayRecords(resolved, undefined, (_records, total) => {
         setRecords([..._records]);
         setLoadingProgress(total);
       });

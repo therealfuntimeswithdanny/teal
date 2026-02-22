@@ -29,7 +29,7 @@ export default function StatsPage() {
       setLoadingProgress(0);
       try {
         const resolved = handle.startsWith("did:") ? handle : await resolveHandle(handle);
-        const all = await fetchAllPlayRecords(resolved, 5000, (_records, total) => {
+        const all = await fetchAllPlayRecords(resolved, undefined, (_records, total) => {
           if (!cancelled) {
             setRecords([..._records]);
             setLoadingProgress(total);

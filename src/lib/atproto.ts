@@ -10,6 +10,7 @@ export interface PlayRecord {
     trackName?: string;
     playedTime?: string;
     releaseName?: string;
+    releaseMbId?: string;
     musicServiceBaseDomain?: string;
   };
 }
@@ -80,17 +81,28 @@ export async function fetchPlayRecords(
 
 export async function fetchAllPlayRecords(
   did: string,
-  maxRecords = 5000,
+  maxRecords?: number,
   onBatch?: (records: PlayRecord[], total: number) => void
 ): Promise<PlayRecord[]> {
   const all: PlayRecord[] = [];
   let cursor: string | undefined;
+  const seenCursors = new Set<string>();
 
-  while (all.length < maxRecords) {
+  while (true) {
+    if (cursor) {
+      if (seenCursors.has(cursor)) break;
+      seenCursors.add(cursor);
+    }
+
     const res = await fetchPlayRecords(did, cursor);
     all.push(...res.records);
     onBatch?.(all, all.length);
     cursor = res.cursor;
+
+    if (maxRecords !== undefined && all.length >= maxRecords) {
+      return all.slice(0, maxRecords);
+    }
+
     if (!cursor || res.records.length === 0) break;
   }
 
@@ -141,6 +153,52 @@ export async function fetchAlbumArt(
           artCache.set(key, coverUrl);
           return coverUrl;
         }
+      }
+    }
+  } catch {
+    // fall through
+  }
+
+  // Fallback: iTunes search API (no auth required)
+  try {
+    const term = [trackName, artistName, releaseName].filter(Boolean).join(" ");
+    const itunesRes = await fetch(
+      `https://itunes.apple.com/search?term=${encodeURIComponent(term)}&entity=song&limit=5`
+    );
+    if (itunesRes.ok) {
+      const itunesData = await itunesRes.json();
+      const normalizedArtist = artistName.toLowerCase();
+      const normalizedTrack = trackName.toLowerCase();
+      const candidate = (itunesData.results ?? []).find((r: any) => {
+        const a = String(r.artistName ?? "").toLowerCase();
+        const t = String(r.trackName ?? "").toLowerCase();
+        return a.includes(normalizedArtist) || normalizedArtist.includes(a) || t === normalizedTrack;
+      }) ?? itunesData.results?.[0];
+
+      if (candidate?.artworkUrl100) {
+        const artworkUrl = String(candidate.artworkUrl100).replace("100x100bb", "600x600bb");
+        artCache.set(key, artworkUrl);
+        return artworkUrl;
+      }
+    }
+  } catch {
+    // fall through
+  }
+
+  // Fallback: Openverse image search with album + artist query
+  try {
+    const q = releaseName
+      ? `${releaseName} ${artistName} album cover`
+      : `${trackName} ${artistName} album cover`;
+    const ovRes = await fetch(
+      `https://api.openverse.org/v1/images/?q=${encodeURIComponent(q)}&page_size=1`
+    );
+    if (ovRes.ok) {
+      const ovData = await ovRes.json();
+      const imageUrl = ovData.results?.[0]?.url;
+      if (imageUrl) {
+        artCache.set(key, imageUrl);
+        return imageUrl;
       }
     }
   } catch {
