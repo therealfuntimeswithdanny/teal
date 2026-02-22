@@ -76,8 +76,22 @@ Steps:
 2. In Vercel, click **Add New Project** and import the repo.
 3. Keep the detected framework as **Vite**.
 4. Add any required environment variables:
+   - `VITE_ATPROTO_CLIENT_ID` (default: `https://teal-stats.madebydanny.uk/oauth/client-metadata.json`)
+   - `VITE_ATPROTO_HANDLE_RESOLVER` (default: `https://bsky.social`)
    - `VITE_LASTFM_API_KEY` (optional; only needed for Last.fm art fallback)
 5. Deploy.
+
+### AT Protocol OAuth setup
+
+OAuth is configured for the production domain:
+
+- Client metadata URL: `https://teal-stats.madebydanny.uk/oauth/client-metadata.json`
+- Callback URL: `https://teal-stats.madebydanny.uk/oauth/callback`
+
+Make sure both paths are reachable after deploy (they are provided by:
+
+- `public/oauth/client-metadata.json`
+- the React route `/oauth/callback`)
 
 ### Deploy with Lovable
 

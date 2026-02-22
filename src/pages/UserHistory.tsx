@@ -13,12 +13,24 @@ import {
   hasActivePlayFilters,
   PlayFilters,
 } from "@/lib/playFilters";
+import { useAuth } from "@/contexts/AuthContext";
 
 export default function UserHistory() {
   const { handle: routeHandle } = useParams<{handle: string;}>();
   const navigate = useNavigate();
   const [handle, setHandle] = useState(routeHandle ?? "");
   const [filters, setFilters] = useState<PlayFilters>({ ...EMPTY_PLAY_FILTERS });
+  const [oauthPending, setOauthPending] = useState(false);
+
+  const {
+    initializing: authInitializing,
+    isAuthenticated,
+    sessionDid,
+    signIn,
+    signOut,
+    authError,
+    clearAuthError,
+  } = useAuth();
 
   const {
     records,
@@ -62,6 +74,17 @@ export default function UserHistory() {
     navigate(`/user/${encodeURIComponent(trimmed)}`, { replace: true });
   };
 
+  const handleOAuthSignIn = async () => {
+    if (!handle.trim() || authInitializing || oauthPending) return;
+    clearAuthError();
+    setOauthPending(true);
+    try {
+      await signIn(handle.trim(), `/user/${encodeURIComponent(handle.trim())}`);
+    } finally {
+      setOauthPending(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-xl px-4 py-12">
@@ -84,6 +107,47 @@ export default function UserHistory() {
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Fetch"}
           </Button>
         </form>
+
+        <div className="mb-4 rounded-md border border-border bg-card p-3">
+          {isAuthenticated && sessionDid ?
+          <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm text-foreground">Signed in with AT Protocol OAuth</p>
+                <p className="text-xs text-muted-foreground break-all">{sessionDid}</p>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate(`/user/${encodeURIComponent(sessionDid)}`, { replace: true })}
+                >
+                  My history
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={signOut}>
+                  Sign out
+                </Button>
+              </div>
+            </div> :
+          <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">
+                Sign in with OAuth to use your own account identity.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!handle.trim() || authInitializing || oauthPending}
+                onClick={handleOAuthSignIn}
+              >
+                {oauthPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign in"}
+              </Button>
+            </div>
+          }
+          {authError &&
+          <p className="mt-2 text-sm text-destructive">{authError}</p>
+          }
+        </div>
 
         <div className="mb-4 flex flex-wrap items-center gap-4 rounded-md border border-border bg-card/40 px-3 py-2">
           <div className="flex items-center gap-2">

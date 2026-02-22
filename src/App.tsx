@@ -6,7 +6,9 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
 import UserHistory from "./pages/UserHistory";
 import StatsPage from "./pages/StatsPage";
+import OAuthCallback from "./pages/OAuthCallback";
 import NotFound from "./pages/NotFound";
+import { AuthProvider } from "@/contexts/AuthContext";
 
 const queryClient = new QueryClient();
 
@@ -15,14 +17,17 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Index />} />
-          <Route path="/user/:handle" element={<UserHistory />} />
-          <Route path="/user/:handle/stats" element={<StatsPage />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </BrowserRouter>
+      <AuthProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/" element={<Index />} />
+            <Route path="/oauth/callback" element={<OAuthCallback />} />
+            <Route path="/user/:handle" element={<UserHistory />} />
+            <Route path="/user/:handle/stats" element={<StatsPage />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </BrowserRouter>
+      </AuthProvider>
     </TooltipProvider>
   </QueryClientProvider>
 );
