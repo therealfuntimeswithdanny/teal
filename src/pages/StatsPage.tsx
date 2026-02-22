@@ -7,11 +7,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, Disc3, ArrowLeft, Music, Clock, Users, Disc } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  LineChart, Line, CartesianGrid, AreaChart, Area,
-} from "recharts";
+  LineChart, Line, CartesianGrid, AreaChart, Area } from
+"recharts";
 
 export default function StatsPage() {
-  const { handle } = useParams<{ handle: string }>();
+  const { handle } = useParams<{handle: string;}>();
   const [records, setRecords] = useState<PlayRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -42,15 +42,15 @@ export default function StatsPage() {
         if (!cancelled) setLoading(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {cancelled = true;};
   }, [handle]);
 
   const stats = useMemo(() => {
     if (records.length === 0) return null;
 
     const artistCounts = new Map<string, number>();
-    const trackCounts = new Map<string, { count: number; artist: string }>();
-    const albumCounts = new Map<string, { count: number; artist: string }>();
+    const trackCounts = new Map<string, {count: number;artist: string;}>();
+    const albumCounts = new Map<string, {count: number;artist: string;}>();
     let totalDuration = 0;
 
     // Daily play counts for trend
@@ -92,52 +92,52 @@ export default function StatsPage() {
     const topAlbums = [...albumCounts.entries()].sort((a, b) => b[1].count - a[1].count);
 
     const hours = Math.floor(totalDuration / 3600);
-    const minutes = Math.floor((totalDuration % 3600) / 60);
+    const minutes = Math.floor(totalDuration % 3600 / 60);
 
     // Build daily trend data sorted by date
-    const dailyTrend = [...dailyCounts.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([date, count]) => ({ date: date.slice(5), count }));
+    const dailyTrend = [...dailyCounts.entries()].
+    sort((a, b) => a[0].localeCompare(b[0])).
+    map(([date, count]) => ({ date: date.slice(5), count }));
 
     // Top 5 artists for stacked area chart
     const top5Artists = topArtists.slice(0, 5).map(([name]) => name);
-    const artistTrend = [...dailyArtistCounts.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([date, artists]) => {
-        const entry: Record<string, string | number> = { date: date.slice(5) };
-        for (const a of top5Artists) {
-          entry[a] = artists.get(a) ?? 0;
-        }
-        return entry;
-      });
+    const artistTrend = [...dailyArtistCounts.entries()].
+    sort((a, b) => a[0].localeCompare(b[0])).
+    map(([date, artists]) => {
+      const entry: Record<string, string | number> = { date: date.slice(5) };
+      for (const a of top5Artists) {
+        entry[a] = artists.get(a) ?? 0;
+      }
+      return entry;
+    });
 
     // Top artists bar chart data (top 15)
     const artistBarData = topArtists.slice(0, 15).map(([name, count]) => ({
       name: name.length > 20 ? name.slice(0, 18) + "…" : name,
-      plays: count,
+      plays: count
     }));
 
     return {
       topArtists, topTracks, topAlbums, totalDuration, hours, minutes,
       dailyTrend, artistTrend, top5Artists, artistBarData,
       uniqueArtists: artistCounts.size,
-      uniqueAlbums: albumCounts.size,
+      uniqueAlbums: albumCounts.size
     };
   }, [records]);
 
   const COLORS = [
-    "hsl(var(--primary))",
-    "hsl(var(--accent))",
-    "hsl(180 60% 50%)",
-    "hsl(320 60% 55%)",
-    "hsl(45 80% 55%)",
-  ];
+  "hsl(var(--primary))",
+  "hsl(var(--accent))",
+  "hsl(180 60% 50%)",
+  "hsl(320 60% 55%)",
+  "hsl(45 80% 55%)"];
+
 
   const renderList = (
-    items: [string, any][],
-    showAll: boolean,
-    type: "artist" | "track" | "album"
-  ) => {
+  items: [string, any][],
+  showAll: boolean,
+  type: "artist" | "track" | "album") =>
+  {
     const displayed = showAll ? items : items.slice(0, 20);
     return displayed.map(([name, data], i) => {
       const count = typeof data === "number" ? data : data.count;
@@ -149,18 +149,18 @@ export default function StatsPage() {
           <div className="flex-1 min-w-0">
             <p className="truncate text-sm font-medium text-foreground">{title}</p>
             {subtitle && <p className="truncate text-xs text-muted-foreground">{subtitle}</p>}
-            {type === "artist" && (
-              <div className="mt-1 h-1.5 rounded-full bg-muted overflow-hidden">
+            {type === "artist" &&
+            <div className="mt-1 h-1.5 rounded-full bg-muted overflow-hidden">
                 <div
-                  className="h-full rounded-full bg-primary"
-                  style={{ width: `${(count / maxCount) * 100}%` }}
-                />
+                className="h-full rounded-full bg-primary"
+                style={{ width: `${count / maxCount * 100}%` }} />
+
               </div>
-            )}
+            }
           </div>
           <span className="text-sm text-muted-foreground flex-shrink-0">{count}</span>
-        </div>
-      );
+        </div>);
+
     });
   };
 
@@ -169,7 +169,7 @@ export default function StatsPage() {
     border: "1px solid hsl(var(--border))",
     borderRadius: "8px",
     color: "hsl(var(--foreground))",
-    fontSize: "12px",
+    fontSize: "12px"
   };
 
   return (
@@ -185,7 +185,11 @@ export default function StatsPage() {
           <div className="text-center">
             <Disc3 className="mx-auto mb-3 h-10 w-10 text-primary animate-spin" style={{ animationDuration: "3s" }} />
             <h1 className="text-3xl font-bold tracking-tight text-foreground">
-              Listening Stats
+              
+              
+              teal.fm Stats
+            
+            
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
               {handle} · {records.length} plays loaded{loading ? "…" : ""}
@@ -193,24 +197,20 @@ export default function StatsPage() {
           </div>
         </div>
 
-        {loading && records.length === 0 && (
-          <div className="flex justify-center py-12">
+        {loading && records.length === 0 && <div className="flex justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          </div>
-        )}
+          </div>}
 
-        {loading && loadingProgress > 0 && (
-          <p className="mb-4 text-center text-sm text-muted-foreground">
+        {loading && loadingProgress > 0 && <p className="mb-4 text-center text-sm text-muted-foreground">
             Loading… {loadingProgress} plays fetched
-          </p>
-        )}
+          </p>}
 
-        {error && (
-          <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</p>
-        )}
+        {error &&
+        <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</p>
+        }
 
-        {stats && (
-          <div className="space-y-6">
+        {stats &&
+        <div className="space-y-6">
             {/* Summary cards */}
             <div className="grid grid-cols-2 gap-3">
               <Card>
@@ -274,13 +274,13 @@ export default function StatsPage() {
                         <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
                         <Tooltip contentStyle={customTooltipStyle} />
                         <Area
-                          type="monotone"
-                          dataKey="count"
-                          stroke="hsl(var(--primary))"
-                          fill="hsl(var(--primary))"
-                          fillOpacity={0.2}
-                          name="Plays"
-                        />
+                        type="monotone"
+                        dataKey="count"
+                        stroke="hsl(var(--primary))"
+                        fill="hsl(var(--primary))"
+                        fillOpacity={0.2}
+                        name="Plays" />
+
                       </AreaChart>
                     </ResponsiveContainer>
                   </CardContent>
@@ -296,26 +296,26 @@ export default function StatsPage() {
                         <XAxis dataKey="date" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
                         <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
                         <Tooltip contentStyle={customTooltipStyle} />
-                        {stats.top5Artists.map((artist, i) => (
-                          <Area
-                            key={artist}
-                            type="monotone"
-                            dataKey={artist}
-                            stackId="1"
-                            stroke={COLORS[i]}
-                            fill={COLORS[i]}
-                            fillOpacity={0.4}
-                          />
-                        ))}
+                        {stats.top5Artists.map((artist, i) =>
+                      <Area
+                        key={artist}
+                        type="monotone"
+                        dataKey={artist}
+                        stackId="1"
+                        stroke={COLORS[i]}
+                        fill={COLORS[i]}
+                        fillOpacity={0.4} />
+
+                      )}
                       </AreaChart>
                     </ResponsiveContainer>
                     <div className="mt-3 flex flex-wrap gap-3 text-xs">
-                      {stats.top5Artists.map((artist, i) => (
-                        <div key={artist} className="flex items-center gap-1.5">
+                      {stats.top5Artists.map((artist, i) =>
+                    <div key={artist} className="flex items-center gap-1.5">
                           <div className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: COLORS[i] }} />
                           <span className="text-muted-foreground truncate max-w-[120px]">{artist}</span>
                         </div>
-                      ))}
+                    )}
                     </div>
                   </CardContent>
                 </Card>
@@ -345,11 +345,11 @@ export default function StatsPage() {
               </CardHeader>
               <CardContent className="space-y-2">
                 {renderList(stats.topArtists, showAllArtists, "artist")}
-                {stats.topArtists.length > 20 && (
-                  <Button variant="ghost" size="sm" className="w-full mt-2" onClick={() => setShowAllArtists(!showAllArtists)}>
+                {stats.topArtists.length > 20 &&
+              <Button variant="ghost" size="sm" className="w-full mt-2" onClick={() => setShowAllArtists(!showAllArtists)}>
                     {showAllArtists ? "Show less" : `Show all ${stats.topArtists.length}`}
                   </Button>
-                )}
+              }
               </CardContent>
             </Card>
 
@@ -360,11 +360,11 @@ export default function StatsPage() {
               </CardHeader>
               <CardContent className="space-y-2">
                 {renderList(stats.topTracks, showAllTracks, "track")}
-                {stats.topTracks.length > 20 && (
-                  <Button variant="ghost" size="sm" className="w-full mt-2" onClick={() => setShowAllTracks(!showAllTracks)}>
+                {stats.topTracks.length > 20 &&
+              <Button variant="ghost" size="sm" className="w-full mt-2" onClick={() => setShowAllTracks(!showAllTracks)}>
                     {showAllTracks ? "Show less" : `Show all ${stats.topTracks.length}`}
                   </Button>
-                )}
+              }
               </CardContent>
             </Card>
 
@@ -375,16 +375,16 @@ export default function StatsPage() {
               </CardHeader>
               <CardContent className="space-y-2">
                 {renderList(stats.topAlbums, showAllAlbums, "album")}
-                {stats.topAlbums.length > 20 && (
-                  <Button variant="ghost" size="sm" className="w-full mt-2" onClick={() => setShowAllAlbums(!showAllAlbums)}>
+                {stats.topAlbums.length > 20 &&
+              <Button variant="ghost" size="sm" className="w-full mt-2" onClick={() => setShowAllAlbums(!showAllAlbums)}>
                     {showAllAlbums ? "Show less" : `Show all ${stats.topAlbums.length}`}
                   </Button>
-                )}
+              }
               </CardContent>
             </Card>
           </div>
-        )}
+        }
       </div>
-    </div>
-  );
+    </div>);
+
 }
