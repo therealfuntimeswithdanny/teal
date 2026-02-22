@@ -62,7 +62,26 @@ This project is built with:
 
 ## How can I deploy this project?
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+### Deploy with Vercel
+
+This repo is configured for Vercel (see `vercel.json`):
+
+- Build command: `npm run build`
+- Output directory: `dist`
+- SPA route fallback rewrite to `index.html`
+
+Steps:
+
+1. Push this repo to GitHub.
+2. In Vercel, click **Add New Project** and import the repo.
+3. Keep the detected framework as **Vite**.
+4. Add any required environment variables:
+   - `VITE_LASTFM_API_KEY` (optional; only needed for Last.fm art fallback)
+5. Deploy.
+
+### Deploy with Lovable
+
+Open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
 
 ## Can I connect a custom domain to my Lovable project?
 
