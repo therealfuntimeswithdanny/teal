@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Disc3, Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import AuthAccountMenu from "@/components/AuthAccountMenu";
 
 export default function Index() {
   const [handle, setHandle] = useState("");
@@ -13,11 +14,18 @@ export default function Index() {
     initializing,
     isAuthenticated,
     sessionDid,
+    activeAccount,
     signIn,
     signOut,
     authError,
     clearAuthError,
   } = useAuth();
+
+  useEffect(() => {
+    if (!handle.trim() && isAuthenticated) {
+      setHandle(activeAccount?.handle ?? sessionDid ?? "");
+    }
+  }, [activeAccount?.handle, handle, isAuthenticated, sessionDid]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,6 +55,8 @@ export default function Index() {
         <p className="text-sm text-muted-foreground mb-8">
           enter a bluesky handle that uses teal.fm to track music plays
         </p>
+
+        <AuthAccountMenu />
 
         <form onSubmit={handleSubmit} className="flex gap-2">
           <Input
@@ -79,14 +89,24 @@ export default function Index() {
             <p className="text-sm text-foreground">
               Signed in with AT Protocol OAuth
             </p>
-            <p className="mt-1 text-xs text-muted-foreground break-all">{sessionDid}</p>
+            <p className="mt-1 text-xs text-muted-foreground break-all">
+              {activeAccount?.handle ?? sessionDid}
+            </p>
             <div className="mt-3 flex gap-2">
               <Button
                 type="button"
                 size="sm"
                 onClick={() => navigate(`/user/${encodeURIComponent(sessionDid)}`)}
               >
-                View my stats
+                My history
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => navigate(`/user/${encodeURIComponent(sessionDid)}/stats`)}
+              >
+                My stats
               </Button>
               <Button type="button" size="sm" variant="outline" onClick={signOut}>
                 Sign out

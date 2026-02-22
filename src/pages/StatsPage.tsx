@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,6 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import { usePlayRecords } from "@/hooks/use-play-records";
+import { useAuth } from "@/contexts/AuthContext";
+import AuthAccountMenu from "@/components/AuthAccountMenu";
+import { useUserPreferences } from "@/hooks/use-user-preferences";
 import {
   EMPTY_PLAY_FILTERS,
   filterPlayRecords,
@@ -27,11 +30,30 @@ import {
 } from "recharts";
 
 export default function StatsPage() {
-  const { handle } = useParams<{handle: string;}>();
+  const { handle: routeHandle } = useParams<{handle: string;}>();
   const [showAllArtists, setShowAllArtists] = useState(false);
   const [showAllTracks, setShowAllTracks] = useState(false);
   const [showAllAlbums, setShowAllAlbums] = useState(false);
   const [filters, setFilters] = useState<PlayFilters>({ ...EMPTY_PLAY_FILTERS });
+  const [oauthPending, setOauthPending] = useState(false);
+
+  const {
+    initializing: authInitializing,
+    isAuthenticated,
+    sessionDid,
+    activeAccount,
+    signIn,
+    authError,
+    clearAuthError,
+  } = useAuth();
+
+  const {
+    preferences,
+    ready: preferencesReady,
+    setSavedFilters,
+    togglePinnedArtist,
+    togglePinnedAlbum,
+  } = useUserPreferences(isAuthenticated ? sessionDid : null);
 
   const {
     records,
@@ -43,7 +65,33 @@ export default function StatsPage() {
     setShowPartialResults,
     lastSyncedAt,
     cancelFetch,
-  } = usePlayRecords(handle);
+  } = usePlayRecords(routeHandle);
+
+  useEffect(() => {
+    if (!isAuthenticated || !sessionDid) return;
+    if (!preferencesReady) return;
+    setFilters({ ...preferences.savedFilters.stats });
+  }, [isAuthenticated, preferences.savedFilters.stats, preferencesReady, sessionDid]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !sessionDid || !preferencesReady) return;
+    setSavedFilters("stats", filters);
+  }, [filters, isAuthenticated, preferencesReady, sessionDid, setSavedFilters]);
+
+  const pinnedArtists = preferences.pinnedArtists;
+  const pinnedAlbums = preferences.pinnedAlbums;
+
+  const handleOAuthSignIn = async () => {
+    const trimmed = routeHandle?.trim();
+    if (!trimmed || authInitializing || oauthPending) return;
+    clearAuthError();
+    setOauthPending(true);
+    try {
+      await signIn(trimmed, `/user/${encodeURIComponent(trimmed)}/stats`);
+    } finally {
+      setOauthPending(false);
+    }
+  };
 
   const filteredRecords = useMemo(
     () => filterPlayRecords(displayRecords, filters),
@@ -150,7 +198,7 @@ export default function StatsPage() {
   ];
 
   const renderList = (
-    items: [string, any][],
+    items: [string, number | { count: number; artist: string; }][],
     showAll: boolean,
     type: "artist" | "track" | "album"
   ): ReactNode => {
@@ -166,6 +214,11 @@ export default function StatsPage() {
       const count = typeof data === "number" ? data : data.count;
       const width = maxCount > 0 ? count / maxCount * 100 : 0;
       const [title, subtitle] = type !== "artist" ? name.split(" — ") : [name, null];
+      const isPinned = type === "artist"
+        ? pinnedArtists.includes(name)
+        : type === "album"
+          ? pinnedAlbums.includes(name)
+          : false;
       return (
         <div key={name} className="flex items-center gap-3">
           <span className="w-6 text-right text-sm font-medium text-muted-foreground">{i + 1}</span>
@@ -178,7 +231,29 @@ export default function StatsPage() {
               </div>
             }
           </div>
-          <span className="flex-shrink-0 text-sm text-muted-foreground">{count}</span>
+          <div className="flex items-center gap-2">
+            <span className="flex-shrink-0 text-sm text-muted-foreground">{count}</span>
+            {isAuthenticated && type === "artist" &&
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => togglePinnedArtist(name)}
+            >
+                {isPinned ? "Unpin" : "Pin"}
+              </Button>
+            }
+            {isAuthenticated && type === "album" &&
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => togglePinnedAlbum(name)}
+            >
+                {isPinned ? "Unpin" : "Pin"}
+              </Button>
+            }
+          </div>
         </div>
       );
     });
@@ -196,7 +271,7 @@ export default function StatsPage() {
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-3xl px-4 py-12">
         <div className="mb-8">
-          <Link to={`/user/${encodeURIComponent(handle ?? "")}`}>
+          <Link to={`/user/${encodeURIComponent(routeHandle ?? "")}`}>
             <Button variant="ghost" size="sm" className="mb-4 gap-2">
               <ArrowLeft className="h-4 w-4" />
               Back to history
@@ -206,10 +281,35 @@ export default function StatsPage() {
             <Disc3 className="mx-auto mb-3 h-10 w-10 animate-spin text-primary" style={{ animationDuration: "3s" }} />
             <h1 className="text-3xl font-bold tracking-tight text-foreground">teal.fm Stats</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              {handle} · {filteredRecords.length} shown{filteredRecords.length !== displayRecords.length ? ` of ${displayRecords.length}` : ""} · {records.length} total loaded{loading ? "…" : ""}
+              {routeHandle} · {filteredRecords.length} shown{filteredRecords.length !== displayRecords.length ? ` of ${displayRecords.length}` : ""} · {records.length} total loaded{loading ? "…" : ""}
             </p>
           </div>
         </div>
+
+        {isAuthenticated ?
+        <div className="mb-4">
+            <AuthAccountMenu lastSyncedAt={lastSyncedAt} />
+          </div> :
+        <div className="mb-4 rounded-md border border-border bg-card p-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">
+                Sign in with OAuth to enable saved filters and pinned artists/albums in stats.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!routeHandle?.trim() || authInitializing || oauthPending}
+                onClick={handleOAuthSignIn}
+              >
+                {oauthPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign in"}
+              </Button>
+            </div>
+            {authError &&
+            <p className="mt-2 text-sm text-destructive">{authError}</p>
+            }
+          </div>
+        }
 
         <div className="mb-4 flex flex-wrap items-center gap-4 rounded-md border border-border bg-card/40 px-3 py-2">
           <div className="flex items-center gap-2">
@@ -292,6 +392,36 @@ export default function StatsPage() {
             </Button>
           </div>
         </div>
+
+        {isAuthenticated && (pinnedArtists.length > 0 || pinnedAlbums.length > 0) &&
+        <div className="mb-4 rounded-md border border-border bg-card p-3">
+            <p className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">Pinned</p>
+            <div className="flex flex-wrap gap-2">
+              {pinnedArtists.map((artist) =>
+              <Button
+                key={`stats-artist:${artist}`}
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setFilters((current) => ({ ...current, artist }))}
+              >
+                  Artist: {artist}
+                </Button>
+              )}
+              {pinnedAlbums.map((album) =>
+              <Button
+                key={`stats-album:${album}`}
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setFilters((current) => ({ ...current, album: album.split(" — ")[0] ?? album }))}
+              >
+                  Album: {album}
+                </Button>
+              )}
+            </div>
+          </div>
+        }
 
         {loading && displayRecords.length === 0 &&
         <div className="flex justify-center py-12">
@@ -477,6 +607,11 @@ export default function StatsPage() {
                 }
               </CardContent>
             </Card>
+
+            <p className="text-center text-xs text-muted-foreground">
+              {filteredRecords.length} shown{filteredRecords.length !== displayRecords.length ? ` of ${displayRecords.length}` : ""} · {records.length} total loaded
+              {isAuthenticated && activeAccount?.handle ? ` · ${activeAccount.handle}` : ""}
+            </p>
           </div>
         }
       </div>

@@ -20,6 +20,13 @@ export interface ListRecordsResponse {
   cursor?: string;
 }
 
+export interface PublicProfile {
+  did: string;
+  handle: string;
+  displayName?: string;
+  avatar?: string;
+}
+
 const BSKY_PUBLIC_API = "https://public.api.bsky.app";
 const LASTFM_API_KEY = typeof import.meta.env.VITE_LASTFM_API_KEY === "string"
   ? import.meta.env.VITE_LASTFM_API_KEY
@@ -32,6 +39,25 @@ export async function resolveHandle(handle: string): Promise<string> {
   if (!res.ok) throw new Error("Could not resolve handle");
   const data = await res.json();
   return data.did;
+}
+
+export async function fetchPublicProfile(actor: string): Promise<PublicProfile | null> {
+  try {
+    const res = await fetch(
+      `${BSKY_PUBLIC_API}/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(actor)}`
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data?.did || !data?.handle) return null;
+    return {
+      did: String(data.did),
+      handle: String(data.handle),
+      displayName: data.displayName ? String(data.displayName) : undefined,
+      avatar: data.avatar ? String(data.avatar) : undefined,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function resolvePdsEndpoint(did: string): Promise<string> {

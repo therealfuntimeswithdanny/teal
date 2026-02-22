@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from "react-router-dom";
 import PlayCard from "@/components/PlayCard";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import { Loader2, Disc3, BarChart3 } from "lucide-react";
@@ -14,6 +15,14 @@ import {
   PlayFilters,
 } from "@/lib/playFilters";
 import { useAuth } from "@/contexts/AuthContext";
+import AuthAccountMenu from "@/components/AuthAccountMenu";
+import { useUserPreferences } from "@/hooks/use-user-preferences";
+import { trackPreferenceKey } from "@/lib/userPreferences";
+
+interface TrackDraft {
+  note: string;
+  tags: string;
+}
 
 export default function UserHistory() {
   const { handle: routeHandle } = useParams<{handle: string;}>();
@@ -21,16 +30,27 @@ export default function UserHistory() {
   const [handle, setHandle] = useState(routeHandle ?? "");
   const [filters, setFilters] = useState<PlayFilters>({ ...EMPTY_PLAY_FILTERS });
   const [oauthPending, setOauthPending] = useState(false);
+  const [editingTrackKey, setEditingTrackKey] = useState<string | null>(null);
+  const [trackDrafts, setTrackDrafts] = useState<Record<string, TrackDraft>>({});
 
   const {
     initializing: authInitializing,
     isAuthenticated,
     sessionDid,
+    activeAccount,
     signIn,
-    signOut,
     authError,
     clearAuthError,
   } = useAuth();
+
+  const {
+    preferences,
+    ready: preferencesReady,
+    setSavedFilters,
+    togglePinnedArtist,
+    togglePinnedAlbum,
+    setTrackPreference,
+  } = useUserPreferences(isAuthenticated ? sessionDid : null);
 
   const {
     records,
@@ -48,6 +68,20 @@ export default function UserHistory() {
   useEffect(() => {
     setHandle(routeHandle ?? "");
   }, [routeHandle]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !sessionDid) return;
+    if (!preferencesReady) return;
+    setFilters({ ...preferences.savedFilters.history });
+  }, [isAuthenticated, preferences.savedFilters.history, preferencesReady, sessionDid]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !sessionDid || !preferencesReady) return;
+    setSavedFilters("history", filters);
+  }, [filters, isAuthenticated, preferencesReady, sessionDid, setSavedFilters]);
+
+  const pinnedArtists = preferences.pinnedArtists;
+  const pinnedAlbums = preferences.pinnedAlbums;
 
   const filteredRecords = useMemo(
     () => filterPlayRecords(displayRecords, filters),
@@ -85,6 +119,37 @@ export default function UserHistory() {
     }
   };
 
+  const openTrackEditor = (
+    key: string,
+    existing: { note: string; tags: string[] } | undefined
+  ) => {
+    setTrackDrafts((current) => ({
+      ...current,
+      [key]: {
+        note: existing?.note ?? "",
+        tags: existing?.tags?.join(", ") ?? "",
+      },
+    }));
+    setEditingTrackKey(key);
+  };
+
+  const saveTrackDraft = (key: string) => {
+    const draft = trackDrafts[key] ?? { note: "", tags: "" };
+    const tags = draft.tags.split(",").map((tag) => tag.trim()).filter(Boolean);
+    setTrackPreference(key, draft.note, tags);
+    setEditingTrackKey(null);
+  };
+
+  const clearTrackDraft = (key: string) => {
+    setTrackPreference(key, "", []);
+    setTrackDrafts((current) => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+    setEditingTrackKey(null);
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-xl px-4 py-12">
@@ -100,38 +165,21 @@ export default function UserHistory() {
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="mb-8 flex gap-2">
+        <form onSubmit={handleSubmit} className="mb-6 flex gap-2">
           <Input value={handle} onChange={(e) => setHandle(e.target.value)} placeholder="handle.bsky.social" className="flex-1 bg-card border-border" />
-
           <Button type="submit" disabled={!handle.trim()}>
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Fetch"}
           </Button>
         </form>
 
+        {isAuthenticated ?
+        <div className="mb-4">
+            <AuthAccountMenu lastSyncedAt={lastSyncedAt} />
+          </div> :
         <div className="mb-4 rounded-md border border-border bg-card p-3">
-          {isAuthenticated && sessionDid ?
-          <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm text-foreground">Signed in with AT Protocol OAuth</p>
-                <p className="text-xs text-muted-foreground break-all">{sessionDid}</p>
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => navigate(`/user/${encodeURIComponent(sessionDid)}`, { replace: true })}
-                >
-                  My history
-                </Button>
-                <Button type="button" variant="outline" size="sm" onClick={signOut}>
-                  Sign out
-                </Button>
-              </div>
-            </div> :
-          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-sm text-muted-foreground">
-                Sign in with OAuth to use your own account identity.
+                Sign in with OAuth to enable saved filters, pinned artists/albums, and private notes.
               </p>
               <Button
                 type="button"
@@ -143,11 +191,11 @@ export default function UserHistory() {
                 {oauthPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign in"}
               </Button>
             </div>
-          }
-          {authError &&
-          <p className="mt-2 text-sm text-destructive">{authError}</p>
-          }
-        </div>
+            {authError &&
+            <p className="mt-2 text-sm text-destructive">{authError}</p>
+            }
+          </div>
+        }
 
         <div className="mb-4 flex flex-wrap items-center gap-4 rounded-md border border-border bg-card/40 px-3 py-2">
           <div className="flex items-center gap-2">
@@ -231,6 +279,36 @@ export default function UserHistory() {
           </div>
         </div>
 
+        {isAuthenticated && (pinnedArtists.length > 0 || pinnedAlbums.length > 0) &&
+        <div className="mb-4 rounded-md border border-border bg-card p-3">
+            <p className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">Pinned</p>
+            <div className="flex flex-wrap gap-2">
+              {pinnedArtists.map((artist) =>
+              <Button
+                key={`artist:${artist}`}
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setFilters((current) => ({ ...current, artist }))}
+              >
+                  Artist: {artist}
+                </Button>
+              )}
+              {pinnedAlbums.map((album) =>
+              <Button
+                key={`album:${album}`}
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setFilters((current) => ({ ...current, album: album.split(" — ")[0] ?? album }))}
+              >
+                  Album: {album}
+                </Button>
+              )}
+            </div>
+          </div>
+        }
+
         {error &&
         <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">
             {error}
@@ -248,10 +326,99 @@ export default function UserHistory() {
           </div>
         }
 
-        <div className="space-y-2">
-          {filteredRecords.map((r) =>
-          <PlayCard key={r.uri} record={r} />
-          )}
+        <div className="space-y-3">
+          {filteredRecords.map((record) => {
+            const key = trackPreferenceKey(record);
+            const pref = preferences.trackPreferences[key];
+            const draft = trackDrafts[key] ?? {
+              note: pref?.note ?? "",
+              tags: pref?.tags?.join(", ") ?? "",
+            };
+            const artist = record.value.artists?.map((item) => item.artistName).join(", ") ?? "Unknown";
+            const album = record.value.releaseName;
+
+            return (
+              <div key={record.uri} className="space-y-1">
+                <PlayCard record={record} />
+                {isAuthenticated &&
+                <div className="rounded-md border border-border bg-card/50 p-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => togglePinnedArtist(artist)}
+                      >
+                        {pinnedArtists.includes(artist) ? "Unpin artist" : "Pin artist"}
+                      </Button>
+                      {album &&
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => togglePinnedAlbum(`${album} — ${artist}`)}
+                      >
+                          {pinnedAlbums.includes(`${album} — ${artist}`) ? "Unpin album" : "Pin album"}
+                        </Button>
+                      }
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openTrackEditor(key, pref)}
+                      >
+                        {pref ? "Edit note/tags" : "Add note/tags"}
+                      </Button>
+                    </div>
+
+                    {pref &&
+                    <div className="mt-2 text-xs text-muted-foreground space-y-1">
+                        {pref.tags.length > 0 &&
+                        <p>Tags: {pref.tags.join(", ")}</p>
+                        }
+                        {pref.note && <p>Note: {pref.note}</p>}
+                      </div>
+                    }
+
+                    {editingTrackKey === key &&
+                    <div className="mt-2 space-y-2">
+                        <Input
+                          value={draft.tags}
+                          onChange={(e) =>
+                            setTrackDrafts((current) => ({
+                              ...current,
+                              [key]: { ...draft, tags: e.target.value },
+                            }))}
+                          placeholder="tag1, tag2"
+                        />
+                        <Textarea
+                          value={draft.note}
+                          onChange={(e) =>
+                            setTrackDrafts((current) => ({
+                              ...current,
+                              [key]: { ...draft, note: e.target.value },
+                            }))}
+                          placeholder="Private note for this track"
+                          rows={3}
+                        />
+                        <div className="flex gap-2">
+                          <Button type="button" size="sm" onClick={() => saveTrackDraft(key)}>
+                            Save
+                          </Button>
+                          <Button type="button" variant="outline" size="sm" onClick={() => clearTrackDraft(key)}>
+                            Clear
+                          </Button>
+                          <Button type="button" variant="ghost" size="sm" onClick={() => setEditingTrackKey(null)}>
+                            Close
+                          </Button>
+                        </div>
+                      </div>
+                    }
+                  </div>
+                }
+              </div>
+            );
+          })}
         </div>
 
         {filteredRecords.length === 0 && hasActivePlayFilters(filters) &&
@@ -263,9 +430,10 @@ export default function UserHistory() {
         {displayRecords.length > 0 && !loading &&
         <p className="mt-6 text-center text-xs text-muted-foreground">
             {filteredRecords.length} shown{filteredRecords.length !== displayRecords.length ? ` of ${displayRecords.length}` : ""} · {records.length} total loaded
+            {isAuthenticated && activeAccount?.handle ? ` · ${activeAccount.handle}` : ""}
           </p>
         }
       </div>
-    </div>);
-
+    </div>
+  );
 }
