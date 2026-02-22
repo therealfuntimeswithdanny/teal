@@ -66,6 +66,14 @@ export interface ArtistSongResult {
   previewUrl?: string;
 }
 
+export interface SongSearchResult {
+  trackId: number;
+  trackName: string;
+  artistName: string;
+  collectionName?: string;
+  previewUrl?: string;
+}
+
 export interface PinWriteInput {
   pinType: "song" | "album" | "artist";
   title: string;
@@ -220,6 +228,7 @@ export async function createPinRecord(
     body: JSON.stringify({
       repo: did,
       collection: "uk.madebydanny.teal.pin",
+      validate: false,
       record,
     }),
   });
@@ -286,6 +295,42 @@ export async function fetchArtistSongs(artistId: number): Promise<ArtistSongResu
 
   const seenTrackIds = new Set<number>();
   const uniqueSongs: ArtistSongResult[] = [];
+  for (const song of songs) {
+    if (seenTrackIds.has(song.trackId)) continue;
+    seenTrackIds.add(song.trackId);
+    uniqueSongs.push(song);
+  }
+
+  return uniqueSongs;
+}
+
+export async function searchSongs(query: string): Promise<SongSearchResult[]> {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+
+  const params = new URLSearchParams({
+    term: trimmed,
+    entity: "song",
+    attribute: "songTerm",
+    limit: "25",
+  });
+
+  const res = await fetch(`https://itunes.apple.com/search?${params}`);
+  if (!res.ok) throw new Error("Failed to search songs");
+  const data = await res.json();
+
+  const songs = (data.results ?? [])
+    .map((item: Record<string, unknown>) => ({
+      trackId: Number(item.trackId),
+      trackName: String(item.trackName ?? ""),
+      artistName: String(item.artistName ?? ""),
+      collectionName: item.collectionName ? String(item.collectionName) : undefined,
+      previewUrl: item.previewUrl ? String(item.previewUrl) : undefined,
+    }))
+    .filter((item: SongSearchResult) => Boolean(item.trackId) && Boolean(item.trackName));
+
+  const seenTrackIds = new Set<number>();
+  const uniqueSongs: SongSearchResult[] = [];
   for (const song of songs) {
     if (seenTrackIds.has(song.trackId)) continue;
     seenTrackIds.add(song.trackId);

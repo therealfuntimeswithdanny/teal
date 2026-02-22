@@ -16,11 +16,13 @@ import {
   fetchPinRecords,
   fetchPublicProfile,
   searchArtists,
+  searchSongs,
   type ArtistSearchResult,
   type ArtistSongResult,
   type PinRecord,
   type PlayRecord,
   type PublicProfile,
+  type SongSearchResult,
   resolvePdsEndpoint,
 } from "@/lib/atproto";
 import { Loader2, Disc3, ArrowLeft, Music, Clock, Users, Disc, Pin } from "lucide-react";
@@ -105,6 +107,10 @@ export default function StatsPage() {
   const [pinError, setPinError] = useState<string | null>(null);
 
   const [artistQuery, setArtistQuery] = useState("");
+  const [songQuery, setSongQuery] = useState("");
+  const [songResults, setSongResults] = useState<SongSearchResult[]>([]);
+  const [songSearchLoading, setSongSearchLoading] = useState(false);
+  const [songSearchError, setSongSearchError] = useState<string | null>(null);
   const [artistResults, setArtistResults] = useState<ArtistSearchResult[]>([]);
   const [artistSearchLoading, setArtistSearchLoading] = useState(false);
   const [artistSearchError, setArtistSearchError] = useState<string | null>(null);
@@ -360,6 +366,36 @@ export default function StatsPage() {
     }
   };
 
+  const handlePinSongFromSearch = async (song: SongSearchResult) => {
+    if (!sessionDid || !hasOAuthSession) {
+      setPinError("Sign in to pin songs.");
+      return;
+    }
+
+    const trackName = song.trackName;
+    const artistName = song.artistName;
+    const actionKey = `song:${trackName}:${artistName}`;
+
+    setPinError(null);
+    setPinActionKey(actionKey);
+
+    try {
+      await createPinRecord(sessionDid, {
+        pinType: "song",
+        title: trackName,
+        trackName,
+        artistName,
+        releaseName: song.collectionName,
+        originUrl: song.previewUrl,
+      });
+      queuePinReload();
+    } catch (pinRecordError) {
+      setPinError(pinRecordError instanceof Error ? pinRecordError.message : "Failed to pin song");
+    } finally {
+      setPinActionKey((current) => (current === actionKey ? null : current));
+    }
+  };
+
   const handlePinArtist = async (artistName: string) => {
     if (!sessionDid || !hasOAuthSession) {
       setPinError("Sign in to pin artists.");
@@ -407,6 +443,33 @@ export default function StatsPage() {
     } finally {
       setArtistSearchLoading(false);
     }
+  };
+
+  const runSongSearch = async () => {
+    const trimmed = songQuery.trim();
+    if (!trimmed) {
+      setSongResults([]);
+      setSongSearchError(null);
+      return;
+    }
+
+    setSongSearchError(null);
+    setSongSearchLoading(true);
+
+    try {
+      const results = await searchSongs(trimmed);
+      setSongResults(results);
+    } catch (searchError) {
+      setSongSearchError(searchError instanceof Error ? searchError.message : "Failed to search songs");
+      setSongResults([]);
+    } finally {
+      setSongSearchLoading(false);
+    }
+  };
+
+  const handleSongSearchSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    void runSongSearch();
   };
 
   const handleArtistSearchSubmit = (event: React.FormEvent) => {
@@ -663,10 +726,69 @@ export default function StatsPage() {
         <section>
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-lg">Artist Search</CardTitle>
-              <p className="text-xs text-muted-foreground">Search artists, pin them, and view songs from the search API</p>
+              <CardTitle className="text-lg">Music Search</CardTitle>
+              <p className="text-xs text-muted-foreground">Search songs and artists with a music API, then pin what you want</p>
             </CardHeader>
             <CardContent className="space-y-4">
+              <form onSubmit={handleSongSearchSubmit} className="flex flex-wrap gap-2">
+                <Input
+                  placeholder="Search song names"
+                  value={songQuery}
+                  onChange={(event) => setSongQuery(event.target.value)}
+                  className="min-w-[220px] flex-1"
+                />
+                <Button type="submit" disabled={!songQuery.trim() || songSearchLoading}>
+                  {songSearchLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Search songs"}
+                </Button>
+              </form>
+
+              {songSearchError &&
+              <p className="text-sm text-destructive">{songSearchError}</p>
+              }
+
+              {songResults.length > 0 &&
+              <div className="space-y-2">
+                  {songResults.map((song) => {
+                    const artistPinned = pinnedArtistKeys.has(normalizeLabel(song.artistName));
+                    const songPinned = pinnedSongKeys.has(songPinKey(song.trackName, song.artistName));
+                    const songActionKey = `song:${song.trackName}:${song.artistName}`;
+                    const artistActionKey = `artist:${song.artistName}`;
+
+                    return (
+                      <div key={song.trackId} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border p-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-foreground">{song.trackName}</p>
+                          <p className="truncate text-xs text-muted-foreground">{song.artistName}</p>
+                          {song.collectionName && <p className="truncate text-xs text-muted-foreground/80">{song.collectionName}</p>}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={songPinned ? "secondary" : "outline"}
+                            disabled={!hasOAuthSession || songPinned || pinActionKey === songActionKey}
+                            onClick={() => void handlePinSongFromSearch(song)}
+                          >
+                            {pinActionKey === songActionKey ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pin className="h-4 w-4" />}
+                            {songPinned ? "Pinned song" : "Pin song"}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={artistPinned ? "secondary" : "outline"}
+                            disabled={!hasOAuthSession || artistPinned || pinActionKey === artistActionKey}
+                            onClick={() => void handlePinArtist(song.artistName)}
+                          >
+                            {pinActionKey === artistActionKey ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pin className="h-4 w-4" />}
+                            {artistPinned ? "Pinned artist" : "Pin artist"}
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              }
+
               <form onSubmit={handleArtistSearchSubmit} className="flex flex-wrap gap-2">
                 <Input
                   placeholder="Search artist names"
@@ -675,7 +797,7 @@ export default function StatsPage() {
                   className="min-w-[220px] flex-1"
                 />
                 <Button type="submit" disabled={!artistQuery.trim() || artistSearchLoading}>
-                  {artistSearchLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Search"}
+                  {artistSearchLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Search artists"}
                 </Button>
               </form>
 
