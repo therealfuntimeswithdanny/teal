@@ -1,84 +1,96 @@
-import { useState, useEffect, useMemo } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useParams, Link } from "react-router-dom";
-import { resolveHandle, fetchAllPlayRecords, PlayRecord } from "@/lib/atproto";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Progress } from "@/components/ui/progress";
+import { usePlayRecords } from "@/hooks/use-play-records";
+import {
+  EMPTY_PLAY_FILTERS,
+  filterPlayRecords,
+  hasActivePlayFilters,
+  PlayFilters,
+} from "@/lib/playFilters";
 import { Loader2, Disc3, ArrowLeft, Music, Clock, Users, Disc } from "lucide-react";
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  LineChart, Line, CartesianGrid, AreaChart, Area } from
-"recharts";
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  CartesianGrid,
+  AreaChart,
+  Area,
+} from "recharts";
 
 export default function StatsPage() {
   const { handle } = useParams<{handle: string;}>();
-  const [records, setRecords] = useState<PlayRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [loadingProgress, setLoadingProgress] = useState(0);
   const [showAllArtists, setShowAllArtists] = useState(false);
   const [showAllTracks, setShowAllTracks] = useState(false);
   const [showAllAlbums, setShowAllAlbums] = useState(false);
+  const [filters, setFilters] = useState<PlayFilters>({ ...EMPTY_PLAY_FILTERS });
 
-  useEffect(() => {
-    if (!handle) return;
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      setError("");
-      setLoadingProgress(0);
-      try {
-        const resolved = handle.startsWith("did:") ? handle : await resolveHandle(handle);
-        const all = await fetchAllPlayRecords(resolved, undefined, (_records, total) => {
-          if (!cancelled) {
-            setRecords([..._records]);
-            setLoadingProgress(total);
-          }
-        });
-        if (!cancelled) setRecords(all);
-      } catch (e: any) {
-        if (!cancelled) setError(e.message ?? "Something went wrong");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {cancelled = true;};
-  }, [handle]);
+  const {
+    records,
+    displayRecords,
+    loading,
+    error,
+    progress,
+    showPartialResults,
+    setShowPartialResults,
+    lastSyncedAt,
+    cancelFetch,
+  } = usePlayRecords(handle);
+
+  const filteredRecords = useMemo(
+    () => filterPlayRecords(displayRecords, filters),
+    [displayRecords, filters]
+  );
+
+  const progressValue = useMemo(() => {
+    if (!progress.estimatedTotal || progress.estimatedTotal <= 0) return 0;
+    const value = progress.loadedCount / progress.estimatedTotal * 100;
+    if (loading && progress.hasNext) {
+      return Math.max(2, Math.min(99, value));
+    }
+    return Math.max(0, Math.min(100, value));
+  }, [loading, progress]);
 
   const stats = useMemo(() => {
-    if (records.length === 0) return null;
+    if (filteredRecords.length === 0) return null;
 
     const artistCounts = new Map<string, number>();
     const trackCounts = new Map<string, {count: number;artist: string;}>();
     const albumCounts = new Map<string, {count: number;artist: string;}>();
     let totalDuration = 0;
 
-    // Daily play counts for trend
     const dailyCounts = new Map<string, number>();
-    // Daily artist breakdown (top 5 artists over time)
     const dailyArtistCounts = new Map<string, Map<string, number>>();
 
-    for (const r of records) {
-      const v = r.value;
-      const artist = v.artists?.map((a) => a.artistName).join(", ") ?? "Unknown";
+    for (const record of filteredRecords) {
+      const value = record.value;
+      const artist = value.artists?.map((artistItem) => artistItem.artistName).join(", ") ?? "Unknown";
+      const trackName = value.trackName ?? "Untitled";
 
       artistCounts.set(artist, (artistCounts.get(artist) ?? 0) + 1);
 
-      const trackKey = `${v.trackName} — ${artist}`;
-      const existing = trackCounts.get(trackKey);
-      trackCounts.set(trackKey, { count: (existing?.count ?? 0) + 1, artist });
+      const trackKey = `${trackName} — ${artist}`;
+      const existingTrack = trackCounts.get(trackKey);
+      trackCounts.set(trackKey, { count: (existingTrack?.count ?? 0) + 1, artist });
 
-      if (v.releaseName) {
-        const albumKey = `${v.releaseName} — ${artist}`;
+      if (value.releaseName) {
+        const albumKey = `${value.releaseName} — ${artist}`;
         const existingAlbum = albumCounts.get(albumKey);
         albumCounts.set(albumKey, { count: (existingAlbum?.count ?? 0) + 1, artist });
       }
 
-      if (v.duration) totalDuration += v.duration;
+      if (value.duration) totalDuration += value.duration;
 
-      // Trend data
-      if (v.playedTime) {
-        const day = v.playedTime.slice(0, 10);
+      if (value.playedTime) {
+        const day = value.playedTime.slice(0, 10);
         dailyCounts.set(day, (dailyCounts.get(day) ?? 0) + 1);
 
         if (!dailyArtistCounts.has(day)) dailyArtistCounts.set(day, new Map());
@@ -94,73 +106,81 @@ export default function StatsPage() {
     const hours = Math.floor(totalDuration / 3600);
     const minutes = Math.floor(totalDuration % 3600 / 60);
 
-    // Build daily trend data sorted by date
-    const dailyTrend = [...dailyCounts.entries()].
-    sort((a, b) => a[0].localeCompare(b[0])).
-    map(([date, count]) => ({ date: date.slice(5), count }));
+    const dailyTrend = [...dailyCounts.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([date, count]) => ({ date: date.slice(5), count }));
 
-    // Top 5 artists for stacked area chart
     const top5Artists = topArtists.slice(0, 5).map(([name]) => name);
-    const artistTrend = [...dailyArtistCounts.entries()].
-    sort((a, b) => a[0].localeCompare(b[0])).
-    map(([date, artists]) => {
-      const entry: Record<string, string | number> = { date: date.slice(5) };
-      for (const a of top5Artists) {
-        entry[a] = artists.get(a) ?? 0;
-      }
-      return entry;
-    });
+    const artistTrend = [...dailyArtistCounts.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([date, artists]) => {
+        const entry: Record<string, string | number> = { date: date.slice(5) };
+        for (const artistName of top5Artists) {
+          entry[artistName] = artists.get(artistName) ?? 0;
+        }
+        return entry;
+      });
 
-    // Top artists bar chart data (top 15)
     const artistBarData = topArtists.slice(0, 15).map(([name, count]) => ({
-      name: name.length > 20 ? name.slice(0, 18) + "…" : name,
-      plays: count
+      name: name.length > 20 ? `${name.slice(0, 18)}…` : name,
+      plays: count,
     }));
 
     return {
-      topArtists, topTracks, topAlbums, totalDuration, hours, minutes,
-      dailyTrend, artistTrend, top5Artists, artistBarData,
+      topArtists,
+      topTracks,
+      topAlbums,
+      hours,
+      minutes,
+      dailyTrend,
+      artistTrend,
+      top5Artists,
+      artistBarData,
       uniqueArtists: artistCounts.size,
-      uniqueAlbums: albumCounts.size
+      uniqueAlbums: albumCounts.size,
     };
-  }, [records]);
+  }, [filteredRecords]);
 
   const COLORS = [
-  "hsl(var(--primary))",
-  "hsl(var(--accent))",
-  "hsl(180 60% 50%)",
-  "hsl(320 60% 55%)",
-  "hsl(45 80% 55%)"];
-
+    "hsl(var(--primary))",
+    "hsl(var(--accent))",
+    "hsl(180 60% 50%)",
+    "hsl(320 60% 55%)",
+    "hsl(45 80% 55%)",
+  ];
 
   const renderList = (
-  items: [string, any][],
-  showAll: boolean,
-  type: "artist" | "track" | "album") =>
-  {
+    items: [string, any][],
+    showAll: boolean,
+    type: "artist" | "track" | "album"
+  ): ReactNode => {
+    if (items.length === 0) {
+      return <p className="text-sm text-muted-foreground">No matching data.</p>;
+    }
+
     const displayed = showAll ? items : items.slice(0, 20);
+    const first = items[0][1];
+    const maxCount = typeof first === "number" ? first : first.count;
+
     return displayed.map(([name, data], i) => {
       const count = typeof data === "number" ? data : data.count;
-      const maxCount = typeof items[0][1] === "number" ? items[0][1] : items[0][1].count;
+      const width = maxCount > 0 ? count / maxCount * 100 : 0;
       const [title, subtitle] = type !== "artist" ? name.split(" — ") : [name, null];
       return (
         <div key={name} className="flex items-center gap-3">
           <span className="w-6 text-right text-sm font-medium text-muted-foreground">{i + 1}</span>
-          <div className="flex-1 min-w-0">
+          <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium text-foreground">{title}</p>
             {subtitle && <p className="truncate text-xs text-muted-foreground">{subtitle}</p>}
             {type === "artist" &&
-            <div className="mt-1 h-1.5 rounded-full bg-muted overflow-hidden">
-                <div
-                className="h-full rounded-full bg-primary"
-                style={{ width: `${count / maxCount * 100}%` }} />
-
+            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
+                <div className="h-full rounded-full bg-primary" style={{ width: `${width}%` }} />
               </div>
             }
           </div>
-          <span className="text-sm text-muted-foreground flex-shrink-0">{count}</span>
-        </div>);
-
+          <span className="flex-shrink-0 text-sm text-muted-foreground">{count}</span>
+        </div>
+      );
     });
   };
 
@@ -169,7 +189,7 @@ export default function StatsPage() {
     border: "1px solid hsl(var(--border))",
     borderRadius: "8px",
     color: "hsl(var(--foreground))",
-    fontSize: "12px"
+    fontSize: "12px",
   };
 
   return (
@@ -177,54 +197,133 @@ export default function StatsPage() {
       <div className="mx-auto max-w-3xl px-4 py-12">
         <div className="mb-8">
           <Link to={`/user/${encodeURIComponent(handle ?? "")}`}>
-            <Button variant="ghost" size="sm" className="gap-2 mb-4">
+            <Button variant="ghost" size="sm" className="mb-4 gap-2">
               <ArrowLeft className="h-4 w-4" />
               Back to history
             </Button>
           </Link>
           <div className="text-center">
-            <Disc3 className="mx-auto mb-3 h-10 w-10 text-primary animate-spin" style={{ animationDuration: "3s" }} />
-            <h1 className="text-3xl font-bold tracking-tight text-foreground">
-              
-              
-              teal.fm Stats
-            
-            
-            </h1>
+            <Disc3 className="mx-auto mb-3 h-10 w-10 animate-spin text-primary" style={{ animationDuration: "3s" }} />
+            <h1 className="text-3xl font-bold tracking-tight text-foreground">teal.fm Stats</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              {handle} · {records.length} plays loaded{loading ? "…" : ""}
+              {handle} · {filteredRecords.length} shown{filteredRecords.length !== displayRecords.length ? ` of ${displayRecords.length}` : ""} · {records.length} total loaded{loading ? "…" : ""}
             </p>
           </div>
         </div>
 
-        {loading && records.length === 0 && <div className="flex justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          </div>}
+        <div className="mb-4 flex flex-wrap items-center gap-4 rounded-md border border-border bg-card/40 px-3 py-2">
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="stats-partial-toggle"
+              checked={showPartialResults}
+              onCheckedChange={(value) => setShowPartialResults(value === true)}
+            />
+            <label htmlFor="stats-partial-toggle" className="text-sm text-muted-foreground">
+              Show partial results while syncing
+            </label>
+          </div>
+          {loading &&
+          <Button type="button" variant="outline" size="sm" onClick={cancelFetch}>
+              Cancel sync
+            </Button>
+          }
+          {lastSyncedAt &&
+          <span className="text-xs text-muted-foreground">
+              Cache updated {new Date(lastSyncedAt).toLocaleString()}
+            </span>
+          }
+        </div>
 
-        {loading && loadingProgress > 0 && <p className="mb-4 text-center text-sm text-muted-foreground">
-            Loading… {loadingProgress} plays fetched
-          </p>}
+        {loading &&
+        <div className="mb-4 rounded-md border border-border bg-card p-3">
+            <div className="mb-2 flex items-center justify-between gap-3 text-sm">
+              <span className="text-muted-foreground">
+                {progress.loadedCount} plays from {progress.pagesLoaded} pages
+              </span>
+              <span className="text-muted-foreground">
+                {progress.estimatedTotal ? `~${progress.estimatedTotal} plays / ~${progress.estimatedPages ?? "?"} pages` : "Estimating…"}
+              </span>
+            </div>
+            <Progress value={progressValue} className="h-2" />
+            {progress.fromCache &&
+            <p className="mt-2 text-xs text-muted-foreground">
+                Loaded {progress.cacheCount} cached plays, +{progress.newCount} new this sync
+              </p>
+            }
+          </div>
+        }
+
+        <div className="mb-4 rounded-md border border-border bg-card p-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <Input
+              placeholder="Track contains…"
+              value={filters.track}
+              onChange={(e) => setFilters((current) => ({ ...current, track: e.target.value }))}
+            />
+            <Input
+              placeholder="Artist contains…"
+              value={filters.artist}
+              onChange={(e) => setFilters((current) => ({ ...current, artist: e.target.value }))}
+            />
+            <Input
+              placeholder="Album contains…"
+              value={filters.album}
+              onChange={(e) => setFilters((current) => ({ ...current, album: e.target.value }))}
+            />
+          </div>
+          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
+            <Input
+              type="date"
+              value={filters.dateFrom}
+              onChange={(e) => setFilters((current) => ({ ...current, dateFrom: e.target.value }))}
+            />
+            <Input
+              type="date"
+              value={filters.dateTo}
+              onChange={(e) => setFilters((current) => ({ ...current, dateTo: e.target.value }))}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setFilters({ ...EMPTY_PLAY_FILTERS })}
+              disabled={!hasActivePlayFilters(filters)}
+            >
+              Clear filters
+            </Button>
+          </div>
+        </div>
+
+        {loading && displayRecords.length === 0 &&
+        <div className="flex justify-center py-12">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          </div>
+        }
 
         {error &&
         <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</p>
         }
 
+        {!stats && !loading && hasActivePlayFilters(filters) && displayRecords.length > 0 &&
+        <p className="mb-4 rounded-md border border-border bg-card p-3 text-sm text-muted-foreground">
+            No plays match the current filters.
+          </p>
+        }
+
         {stats &&
         <div className="space-y-6">
-            {/* Summary cards */}
             <div className="grid grid-cols-2 gap-3">
               <Card>
-                <CardContent className="p-4 flex items-center gap-3">
-                  <Music className="h-5 w-5 text-primary flex-shrink-0" />
+                <CardContent className="flex items-center gap-3 p-4">
+                  <Music className="h-5 w-5 flex-shrink-0 text-primary" />
                   <div>
-                    <p className="text-2xl font-bold text-foreground">{records.length}</p>
+                    <p className="text-2xl font-bold text-foreground">{filteredRecords.length}</p>
                     <p className="text-xs text-muted-foreground">Total plays</p>
                   </div>
                 </CardContent>
               </Card>
               <Card>
-                <CardContent className="p-4 flex items-center gap-3">
-                  <Clock className="h-5 w-5 text-primary flex-shrink-0" />
+                <CardContent className="flex items-center gap-3 p-4">
+                  <Clock className="h-5 w-5 flex-shrink-0 text-primary" />
                   <div>
                     <p className="text-2xl font-bold text-foreground">
                       {stats.hours}h {stats.minutes}m
@@ -234,8 +333,8 @@ export default function StatsPage() {
                 </CardContent>
               </Card>
               <Card>
-                <CardContent className="p-4 flex items-center gap-3">
-                  <Users className="h-5 w-5 text-primary flex-shrink-0" />
+                <CardContent className="flex items-center gap-3 p-4">
+                  <Users className="h-5 w-5 flex-shrink-0 text-primary" />
                   <div>
                     <p className="text-2xl font-bold text-foreground">{stats.uniqueArtists}</p>
                     <p className="text-xs text-muted-foreground">Artists</p>
@@ -243,8 +342,8 @@ export default function StatsPage() {
                 </CardContent>
               </Card>
               <Card>
-                <CardContent className="p-4 flex items-center gap-3">
-                  <Disc className="h-5 w-5 text-primary flex-shrink-0" />
+                <CardContent className="flex items-center gap-3 p-4">
+                  <Disc className="h-5 w-5 flex-shrink-0 text-primary" />
                   <div>
                     <p className="text-2xl font-bold text-foreground">{stats.uniqueAlbums}</p>
                     <p className="text-xs text-muted-foreground">Albums</p>
@@ -253,7 +352,6 @@ export default function StatsPage() {
               </Card>
             </div>
 
-            {/* Trends Section */}
             <Tabs defaultValue="daily" className="w-full">
               <CardHeader className="px-0 pb-3">
                 <CardTitle className="text-lg">Listening Trends</CardTitle>
@@ -274,13 +372,13 @@ export default function StatsPage() {
                         <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
                         <Tooltip contentStyle={customTooltipStyle} />
                         <Area
-                        type="monotone"
-                        dataKey="count"
-                        stroke="hsl(var(--primary))"
-                        fill="hsl(var(--primary))"
-                        fillOpacity={0.2}
-                        name="Plays" />
-
+                          type="monotone"
+                          dataKey="count"
+                          stroke="hsl(var(--primary))"
+                          fill="hsl(var(--primary))"
+                          fillOpacity={0.2}
+                          name="Plays"
+                        />
                       </AreaChart>
                     </ResponsiveContainer>
                   </CardContent>
@@ -297,25 +395,25 @@ export default function StatsPage() {
                         <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
                         <Tooltip contentStyle={customTooltipStyle} />
                         {stats.top5Artists.map((artist, i) =>
-                      <Area
-                        key={artist}
-                        type="monotone"
-                        dataKey={artist}
-                        stackId="1"
-                        stroke={COLORS[i]}
-                        fill={COLORS[i]}
-                        fillOpacity={0.4} />
-
-                      )}
+                        <Area
+                          key={artist}
+                          type="monotone"
+                          dataKey={artist}
+                          stackId="1"
+                          stroke={COLORS[i]}
+                          fill={COLORS[i]}
+                          fillOpacity={0.4}
+                        />
+                        )}
                       </AreaChart>
                     </ResponsiveContainer>
                     <div className="mt-3 flex flex-wrap gap-3 text-xs">
                       {stats.top5Artists.map((artist, i) =>
-                    <div key={artist} className="flex items-center gap-1.5">
+                      <div key={artist} className="flex items-center gap-1.5">
                           <div className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: COLORS[i] }} />
-                          <span className="text-muted-foreground truncate max-w-[120px]">{artist}</span>
+                          <span className="max-w-[120px] truncate text-muted-foreground">{artist}</span>
                         </div>
-                    )}
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -338,7 +436,6 @@ export default function StatsPage() {
               </TabsContent>
             </Tabs>
 
-            {/* Top Artists */}
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg">Top Artists ({stats.topArtists.length})</CardTitle>
@@ -346,14 +443,13 @@ export default function StatsPage() {
               <CardContent className="space-y-2">
                 {renderList(stats.topArtists, showAllArtists, "artist")}
                 {stats.topArtists.length > 20 &&
-              <Button variant="ghost" size="sm" className="w-full mt-2" onClick={() => setShowAllArtists(!showAllArtists)}>
+                <Button variant="ghost" size="sm" className="mt-2 w-full" onClick={() => setShowAllArtists(!showAllArtists)}>
                     {showAllArtists ? "Show less" : `Show all ${stats.topArtists.length}`}
                   </Button>
-              }
+                }
               </CardContent>
             </Card>
 
-            {/* Top Tracks */}
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg">Top Tracks ({stats.topTracks.length})</CardTitle>
@@ -361,14 +457,13 @@ export default function StatsPage() {
               <CardContent className="space-y-2">
                 {renderList(stats.topTracks, showAllTracks, "track")}
                 {stats.topTracks.length > 20 &&
-              <Button variant="ghost" size="sm" className="w-full mt-2" onClick={() => setShowAllTracks(!showAllTracks)}>
+                <Button variant="ghost" size="sm" className="mt-2 w-full" onClick={() => setShowAllTracks(!showAllTracks)}>
                     {showAllTracks ? "Show less" : `Show all ${stats.topTracks.length}`}
                   </Button>
-              }
+                }
               </CardContent>
             </Card>
 
-            {/* Top Albums */}
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg">Top Albums ({stats.topAlbums.length})</CardTitle>
@@ -376,15 +471,15 @@ export default function StatsPage() {
               <CardContent className="space-y-2">
                 {renderList(stats.topAlbums, showAllAlbums, "album")}
                 {stats.topAlbums.length > 20 &&
-              <Button variant="ghost" size="sm" className="w-full mt-2" onClick={() => setShowAllAlbums(!showAllAlbums)}>
+                <Button variant="ghost" size="sm" className="mt-2 w-full" onClick={() => setShowAllAlbums(!showAllAlbums)}>
                     {showAllAlbums ? "Show less" : `Show all ${stats.topAlbums.length}`}
                   </Button>
-              }
+                }
               </CardContent>
             </Card>
           </div>
         }
       </div>
-    </div>);
-
+    </div>
+  );
 }

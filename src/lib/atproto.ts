@@ -21,6 +21,9 @@ export interface ListRecordsResponse {
 }
 
 const BSKY_PUBLIC_API = "https://public.api.bsky.app";
+const LASTFM_API_KEY = typeof import.meta.env.VITE_LASTFM_API_KEY === "string"
+  ? import.meta.env.VITE_LASTFM_API_KEY
+  : "";
 
 export async function resolveHandle(handle: string): Promise<string> {
   const res = await fetch(
@@ -31,7 +34,7 @@ export async function resolveHandle(handle: string): Promise<string> {
   return data.did;
 }
 
-async function resolvePds(did: string): Promise<string> {
+export async function resolvePdsEndpoint(did: string): Promise<string> {
   let doc: any;
   if (did.startsWith("did:plc:")) {
     const res = await fetch(`https://plc.directory/${did}`);
@@ -55,11 +58,17 @@ async function resolvePds(did: string): Promise<string> {
   return pdsService.serviceEndpoint;
 }
 
+export interface FetchPlayRecordsOptions {
+  pds?: string;
+  signal?: AbortSignal;
+}
+
 export async function fetchPlayRecords(
   did: string,
-  cursor?: string
+  cursor?: string,
+  options: FetchPlayRecordsOptions = {}
 ): Promise<ListRecordsResponse> {
-  const pds = await resolvePds(did);
+  const pds = options.pds ?? await resolvePdsEndpoint(did);
 
   const params = new URLSearchParams({
     repo: did,
@@ -68,9 +77,9 @@ export async function fetchPlayRecords(
   });
   if (cursor) params.set("cursor", cursor);
 
-  const res = await fetch(
-    `${pds}/xrpc/com.atproto.repo.listRecords?${params}`
-  );
+  const res = await fetch(`${pds}/xrpc/com.atproto.repo.listRecords?${params}`, {
+    signal: options.signal,
+  });
   if (!res.ok) {
     const text = await res.text();
     console.error("listRecords error:", res.status, text);
@@ -111,11 +120,94 @@ export async function fetchAllPlayRecords(
 
 const artCache = new Map<string, string | null>();
 
+function normalizeItunesArtwork(url: string): string {
+  return url.replace(/\/[0-9]+x[0-9]+bb/, "/600x600bb");
+}
+
+async function fetchItunesArtByIsrc(isrc: string, artistName: string): Promise<string | null> {
+  const res = await fetch(
+    `https://itunes.apple.com/lookup?isrc=${encodeURIComponent(isrc)}&entity=song&limit=5`
+  );
+  if (!res.ok) return null;
+  const data = await res.json();
+  const normalizedArtist = artistName.toLowerCase();
+  const candidate = (data.results ?? []).find((r: any) =>
+    String(r.artistName ?? "").toLowerCase().includes(normalizedArtist)
+  ) ?? data.results?.[0];
+
+  const artworkUrl100 = candidate?.artworkUrl100;
+  if (!artworkUrl100) return null;
+  return normalizeItunesArtwork(String(artworkUrl100));
+}
+
+async function fetchSpotifyOEmbedArt(originUrl?: string): Promise<string | null> {
+  if (!originUrl) return null;
+  try {
+    const parsed = new URL(originUrl);
+    const isSpotifyTrack = parsed.hostname.includes("spotify.com") && parsed.pathname.startsWith("/track/");
+    if (!isSpotifyTrack) return null;
+  } catch {
+    return null;
+  }
+
+  const res = await fetch(
+    `https://open.spotify.com/oembed?url=${encodeURIComponent(originUrl)}`
+  );
+  if (!res.ok) return null;
+  const data = await res.json();
+  return data.thumbnail_url ?? null;
+}
+
+async function fetchLastFmArt(
+  artistName: string,
+  trackName: string,
+  releaseName?: string
+): Promise<string | null> {
+  if (!LASTFM_API_KEY) return null;
+
+  const trackParams = new URLSearchParams({
+    method: "track.getInfo",
+    api_key: LASTFM_API_KEY,
+    artist: artistName,
+    track: trackName,
+    format: "json",
+  });
+  const trackRes = await fetch(`https://ws.audioscrobbler.com/2.0/?${trackParams}`);
+  if (trackRes.ok) {
+    const trackData = await trackRes.json();
+    const trackImages = trackData.track?.album?.image;
+    const image =
+      trackImages?.find((img: any) => img.size === "extralarge")?.["#text"] ??
+      trackImages?.[trackImages.length - 1]?.["#text"];
+    if (image) return image;
+  }
+
+  if (!releaseName) return null;
+
+  const albumParams = new URLSearchParams({
+    method: "album.getInfo",
+    api_key: LASTFM_API_KEY,
+    artist: artistName,
+    album: releaseName,
+    format: "json",
+  });
+  const albumRes = await fetch(`https://ws.audioscrobbler.com/2.0/?${albumParams}`);
+  if (!albumRes.ok) return null;
+  const albumData = await albumRes.json();
+  const albumImages = albumData.album?.image;
+  const image =
+    albumImages?.find((img: any) => img.size === "extralarge")?.["#text"] ??
+    albumImages?.[albumImages.length - 1]?.["#text"];
+  return image || null;
+}
+
 export async function fetchAlbumArt(
   trackName: string,
   artistName: string,
   releaseName?: string,
-  releaseMbId?: string
+  releaseMbId?: string,
+  isrc?: string,
+  originUrl?: string
 ): Promise<string | null> {
   const key = `${artistName}-${releaseName || trackName}`;
   if (artCache.has(key)) return artCache.get(key)!;
@@ -159,6 +251,30 @@ export async function fetchAlbumArt(
     // fall through
   }
 
+  // Fallback: ISRC lookup via iTunes API
+  if (isrc) {
+    try {
+      const itunesArt = await fetchItunesArtByIsrc(isrc, artistName);
+      if (itunesArt) {
+        artCache.set(key, itunesArt);
+        return itunesArt;
+      }
+    } catch {
+      // fall through
+    }
+  }
+
+  // Fallback: Spotify oEmbed if origin URL is a Spotify track
+  try {
+    const spotifyArt = await fetchSpotifyOEmbedArt(originUrl);
+    if (spotifyArt) {
+      artCache.set(key, spotifyArt);
+      return spotifyArt;
+    }
+  } catch {
+    // fall through
+  }
+
   // Fallback: iTunes search API (no auth required)
   try {
     const term = [trackName, artistName, releaseName].filter(Boolean).join(" ");
@@ -176,10 +292,21 @@ export async function fetchAlbumArt(
       }) ?? itunesData.results?.[0];
 
       if (candidate?.artworkUrl100) {
-        const artworkUrl = String(candidate.artworkUrl100).replace("100x100bb", "600x600bb");
+        const artworkUrl = normalizeItunesArtwork(String(candidate.artworkUrl100));
         artCache.set(key, artworkUrl);
         return artworkUrl;
       }
+    }
+  } catch {
+    // fall through
+  }
+
+  // Fallback: Last.fm (requires VITE_LASTFM_API_KEY)
+  try {
+    const lastFmArt = await fetchLastFmArt(artistName, trackName, releaseName);
+    if (lastFmArt) {
+      artCache.set(key, lastFmArt);
+      return lastFmArt;
     }
   } catch {
     // fall through

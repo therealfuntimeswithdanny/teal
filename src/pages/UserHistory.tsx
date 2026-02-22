@@ -1,52 +1,65 @@
-import { useState, useCallback, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { resolveHandle, fetchAllPlayRecords, PlayRecord } from "@/lib/atproto";
 import PlayCard from "@/components/PlayCard";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Progress } from "@/components/ui/progress";
 import { Loader2, Disc3, BarChart3 } from "lucide-react";
+import { usePlayRecords } from "@/hooks/use-play-records";
+import {
+  EMPTY_PLAY_FILTERS,
+  filterPlayRecords,
+  hasActivePlayFilters,
+  PlayFilters,
+} from "@/lib/playFilters";
 
 export default function UserHistory() {
   const { handle: routeHandle } = useParams<{handle: string;}>();
   const navigate = useNavigate();
   const [handle, setHandle] = useState(routeHandle ?? "");
-  const [records, setRecords] = useState<PlayRecord[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [filters, setFilters] = useState<PlayFilters>({ ...EMPTY_PLAY_FILTERS });
 
-  const search = useCallback(async (searchHandle: string) => {
-    if (!searchHandle.trim()) return;
-    setLoading(true);
-    setError("");
-    setRecords([]);
-    setLoadingProgress(0);
-    try {
-      const resolved = searchHandle.startsWith("did:") ? searchHandle : await resolveHandle(searchHandle);
-      const all = await fetchAllPlayRecords(resolved, undefined, (_records, total) => {
-        setRecords([..._records]);
-        setLoadingProgress(total);
-      });
-      setRecords(all);
-    } catch (e: any) {
-      setError(e.message ?? "Something went wrong");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const {
+    records,
+    displayRecords,
+    loading,
+    error,
+    progress,
+    showPartialResults,
+    setShowPartialResults,
+    lastSyncedAt,
+    loadForHandle,
+    cancelFetch,
+  } = usePlayRecords(routeHandle);
 
   useEffect(() => {
-    if (routeHandle) {
-      setHandle(routeHandle);
-      search(routeHandle);
+    setHandle(routeHandle ?? "");
+  }, [routeHandle]);
+
+  const filteredRecords = useMemo(
+    () => filterPlayRecords(displayRecords, filters),
+    [displayRecords, filters]
+  );
+
+  const progressValue = useMemo(() => {
+    if (!progress.estimatedTotal || progress.estimatedTotal <= 0) return 0;
+    const value = progress.loadedCount / progress.estimatedTotal * 100;
+    if (loading && progress.hasNext) {
+      return Math.max(2, Math.min(99, value));
     }
-  }, [routeHandle, search]);
+    return Math.max(0, Math.min(100, value));
+  }, [loading, progress]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (handle.trim()) {
-      navigate(`/user/${encodeURIComponent(handle.trim())}`, { replace: true });
+    const trimmed = handle.trim();
+    if (!trimmed) return;
+    if (trimmed === routeHandle) {
+      void loadForHandle(trimmed);
+      return;
     }
+    navigate(`/user/${encodeURIComponent(trimmed)}`, { replace: true });
   };
 
   return (
@@ -67,15 +80,92 @@ export default function UserHistory() {
         <form onSubmit={handleSubmit} className="mb-8 flex gap-2">
           <Input value={handle} onChange={(e) => setHandle(e.target.value)} placeholder="handle.bsky.social" className="flex-1 bg-card border-border" />
 
-          <Button type="submit" disabled={loading || !handle.trim()}>
-            {loading && records.length === 0 ? <Loader2 className="h-4 w-4 animate-spin" /> : "Fetch"}
+          <Button type="submit" disabled={!handle.trim()}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Fetch"}
           </Button>
         </form>
 
-        {loading && loadingProgress > 0 && <p className="mb-4 text-center text-sm text-muted-foreground">
-            Loading… {loadingProgress} plays fetched
-          </p>
+        <div className="mb-4 flex flex-wrap items-center gap-4 rounded-md border border-border bg-card/40 px-3 py-2">
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="history-partial-toggle"
+              checked={showPartialResults}
+              onCheckedChange={(value) => setShowPartialResults(value === true)}
+            />
+            <label htmlFor="history-partial-toggle" className="text-sm text-muted-foreground">
+              Show partial results while syncing
+            </label>
+          </div>
+          {loading &&
+          <Button type="button" variant="outline" size="sm" onClick={cancelFetch}>
+              Cancel sync
+            </Button>
+          }
+          {lastSyncedAt &&
+          <span className="text-xs text-muted-foreground">
+              Cache updated {new Date(lastSyncedAt).toLocaleString()}
+            </span>
+          }
+        </div>
+
+        {loading &&
+        <div className="mb-4 rounded-md border border-border bg-card p-3">
+            <div className="mb-2 flex items-center justify-between gap-3 text-sm">
+              <span className="text-muted-foreground">
+                {progress.loadedCount} plays from {progress.pagesLoaded} pages
+              </span>
+              <span className="text-muted-foreground">
+                {progress.estimatedTotal ? `~${progress.estimatedTotal} plays / ~${progress.estimatedPages ?? "?"} pages` : "Estimating…"}
+              </span>
+            </div>
+            <Progress value={progressValue} className="h-2" />
+            {progress.fromCache &&
+            <p className="mt-2 text-xs text-muted-foreground">
+                Loaded {progress.cacheCount} cached plays, +{progress.newCount} new this sync
+              </p>
+            }
+          </div>
         }
+
+        <div className="mb-4 rounded-md border border-border bg-card p-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <Input
+              placeholder="Track contains…"
+              value={filters.track}
+              onChange={(e) => setFilters((current) => ({ ...current, track: e.target.value }))}
+            />
+            <Input
+              placeholder="Artist contains…"
+              value={filters.artist}
+              onChange={(e) => setFilters((current) => ({ ...current, artist: e.target.value }))}
+            />
+            <Input
+              placeholder="Album contains…"
+              value={filters.album}
+              onChange={(e) => setFilters((current) => ({ ...current, album: e.target.value }))}
+            />
+          </div>
+          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
+            <Input
+              type="date"
+              value={filters.dateFrom}
+              onChange={(e) => setFilters((current) => ({ ...current, dateFrom: e.target.value }))}
+            />
+            <Input
+              type="date"
+              value={filters.dateTo}
+              onChange={(e) => setFilters((current) => ({ ...current, dateTo: e.target.value }))}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setFilters({ ...EMPTY_PLAY_FILTERS })}
+              disabled={!hasActivePlayFilters(filters)}
+            >
+              Clear filters
+            </Button>
+          </div>
+        </div>
 
         {error &&
         <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">
@@ -95,14 +185,20 @@ export default function UserHistory() {
         }
 
         <div className="space-y-2">
-          {records.map((r) =>
+          {filteredRecords.map((r) =>
           <PlayCard key={r.uri} record={r} />
           )}
         </div>
 
-        {records.length > 0 && !loading &&
+        {filteredRecords.length === 0 && hasActivePlayFilters(filters) &&
+        <p className="mt-4 text-center text-sm text-muted-foreground">
+            No plays match the current filters.
+          </p>
+        }
+
+        {displayRecords.length > 0 && !loading &&
         <p className="mt-6 text-center text-xs text-muted-foreground">
-            {records.length} plays loaded
+            {filteredRecords.length} shown{filteredRecords.length !== displayRecords.length ? ` of ${displayRecords.length}` : ""} · {records.length} total loaded
           </p>
         }
       </div>
