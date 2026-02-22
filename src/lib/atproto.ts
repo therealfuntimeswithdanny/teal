@@ -1,3 +1,5 @@
+import { getOAuthClient } from "@/lib/oauth";
+
 export interface PlayRecord {
   uri: string;
   cid: string;
@@ -15,8 +17,8 @@ export interface PlayRecord {
   };
 }
 
-export interface ListRecordsResponse {
-  records: PlayRecord[];
+export interface ListRecordsResponse<TRecord = PlayRecord> {
+  records: TRecord[];
   cursor?: string;
 }
 
@@ -32,6 +34,8 @@ export interface PinRecord {
   uri: string;
   cid: string;
   value: {
+    $type?: string;
+    createdAt?: string;
     pinType?: string;
     kind?: string;
     type?: string;
@@ -43,7 +47,33 @@ export interface PinRecord {
     artistName?: string;
     title?: string;
     text?: string;
+    originUrl?: string;
+    sourceRecordUri?: string;
   };
+}
+
+export interface ArtistSearchResult {
+  artistId: number;
+  artistName: string;
+  primaryGenreName?: string;
+}
+
+export interface ArtistSongResult {
+  trackId: number;
+  trackName: string;
+  artistName: string;
+  collectionName?: string;
+  previewUrl?: string;
+}
+
+export interface PinWriteInput {
+  pinType: "song" | "album" | "artist";
+  title: string;
+  artistName?: string;
+  trackName?: string;
+  releaseName?: string;
+  originUrl?: string;
+  sourceRecordUri?: string;
 }
 
 const BSKY_PUBLIC_API = "https://public.api.bsky.app";
@@ -113,7 +143,7 @@ export async function fetchPlayRecords(
   did: string,
   cursor?: string,
   options: FetchPlayRecordsOptions = {}
-): Promise<ListRecordsResponse> {
+): Promise<ListRecordsResponse<PlayRecord>> {
   const pds = options.pds ?? await resolvePdsEndpoint(did);
 
   const params = new URLSearchParams({
@@ -138,7 +168,7 @@ export async function fetchPinRecords(
   did: string,
   cursor?: string,
   options: FetchPlayRecordsOptions = {}
-): Promise<ListRecordsResponse> {
+): Promise<ListRecordsResponse<PinRecord>> {
   const pds = options.pds ?? await resolvePdsEndpoint(did);
 
   const params = new URLSearchParams({
@@ -157,6 +187,112 @@ export async function fetchPinRecords(
     throw new Error("Failed to fetch pin records from PDS");
   }
   return res.json();
+}
+
+export async function createPinRecord(
+  did: string,
+  input: PinWriteInput
+): Promise<{ uri: string; cid: string; }> {
+  const oauthClient = await getOAuthClient();
+  const session = await oauthClient.restore(did);
+
+  const record = {
+    $type: "uk.madebydanny.teal.pin",
+    createdAt: new Date().toISOString(),
+    pinType: input.pinType,
+    kind: input.pinType,
+    type: input.pinType,
+    title: input.title,
+    artistName: input.artistName,
+    trackName: input.trackName,
+    songName: input.trackName,
+    releaseName: input.releaseName,
+    albumName: input.releaseName,
+    originUrl: input.originUrl,
+    sourceRecordUri: input.sourceRecordUri,
+  };
+
+  const response = await session.fetchHandler("/xrpc/com.atproto.repo.createRecord", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      repo: did,
+      collection: "uk.madebydanny.teal.pin",
+      record,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || "Failed to create pin record");
+  }
+
+  const data = await response.json();
+  return {
+    uri: String(data.uri),
+    cid: String(data.cid),
+  };
+}
+
+export async function searchArtists(query: string): Promise<ArtistSearchResult[]> {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+
+  const params = new URLSearchParams({
+    term: trimmed,
+    entity: "musicArtist",
+    attribute: "artistTerm",
+    limit: "12",
+  });
+
+  const res = await fetch(`https://itunes.apple.com/search?${params}`);
+  if (!res.ok) throw new Error("Failed to search artists");
+  const data = await res.json();
+
+  return (data.results ?? [])
+    .map((item: Record<string, unknown>) => ({
+      artistId: Number(item.artistId),
+      artistName: String(item.artistName ?? ""),
+      primaryGenreName: item.primaryGenreName ? String(item.primaryGenreName) : undefined,
+    }))
+    .filter((item: ArtistSearchResult) => Boolean(item.artistId) && Boolean(item.artistName));
+}
+
+export async function fetchArtistSongs(artistId: number): Promise<ArtistSongResult[]> {
+  if (!artistId) return [];
+
+  const params = new URLSearchParams({
+    id: String(artistId),
+    entity: "song",
+    limit: "25",
+  });
+
+  const res = await fetch(`https://itunes.apple.com/lookup?${params}`);
+  if (!res.ok) throw new Error("Failed to fetch artist songs");
+  const data = await res.json();
+
+  const songs = (data.results ?? [])
+    .filter((item: Record<string, unknown>) => item.wrapperType === "track")
+    .map((item: Record<string, unknown>) => ({
+      trackId: Number(item.trackId),
+      trackName: String(item.trackName ?? ""),
+      artistName: String(item.artistName ?? ""),
+      collectionName: item.collectionName ? String(item.collectionName) : undefined,
+      previewUrl: item.previewUrl ? String(item.previewUrl) : undefined,
+    }))
+    .filter((item: ArtistSongResult) => Boolean(item.trackId) && Boolean(item.trackName));
+
+  const seenTrackIds = new Set<number>();
+  const uniqueSongs: ArtistSongResult[] = [];
+  for (const song of songs) {
+    if (seenTrackIds.has(song.trackId)) continue;
+    seenTrackIds.add(song.trackId);
+    uniqueSongs.push(song);
+  }
+
+  return uniqueSongs;
 }
 
 export async function fetchAllPlayRecords(

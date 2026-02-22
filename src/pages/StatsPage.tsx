@@ -4,28 +4,26 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import PlayCard from "@/components/PlayCard";
 import { usePlayRecords } from "@/hooks/use-play-records";
 import { useAuth } from "@/contexts/AuthContext";
 import AuthAccountMenu from "@/components/AuthAccountMenu";
-import { useUserPreferences } from "@/hooks/use-user-preferences";
 import {
-  EMPTY_PLAY_FILTERS,
-  filterPlayRecords,
-  hasActivePlayFilters,
-  PlayFilters,
-} from "@/lib/playFilters";
-import {
+  createPinRecord,
+  fetchArtistSongs,
   fetchPinRecords,
   fetchPublicProfile,
+  searchArtists,
+  type ArtistSearchResult,
+  type ArtistSongResult,
   type PinRecord,
+  type PlayRecord,
   type PublicProfile,
   resolvePdsEndpoint,
 } from "@/lib/atproto";
-import { Loader2, Disc3, ArrowLeft, Music, Clock, Users, Disc } from "lucide-react";
+import { Loader2, Disc3, ArrowLeft, Music, Clock, Users, Disc, Pin } from "lucide-react";
 import {
   BarChart,
   Bar,
@@ -40,9 +38,17 @@ import {
 
 interface ProfilePin {
   id: string;
-  type: "album" | "song";
+  type: "album" | "song" | "artist";
   title: string;
   subtitle?: string;
+}
+
+function normalizeLabel(value: string | undefined): string {
+  return (value ?? "").trim().toLowerCase();
+}
+
+function songPinKey(title: string, artist: string): string {
+  return `${normalizeLabel(title)}::${normalizeLabel(artist)}`;
 }
 
 function parsePinRecord(pin: PinRecord): ProfilePin | null {
@@ -58,8 +64,10 @@ function parsePinRecord(pin: PinRecord): ProfilePin | null {
   const trackTitle = value.trackName ?? value.songName;
   const albumTitle = value.releaseName ?? value.albumName;
 
-  let type: "album" | "song";
-  if (rawType.includes("album")) {
+  let type: "album" | "song" | "artist";
+  if (rawType.includes("artist")) {
+    type = "artist";
+  } else if (rawType.includes("album")) {
     type = "album";
   } else if (rawType.includes("song") || rawType.includes("track")) {
     type = "song";
@@ -71,7 +79,9 @@ function parsePinRecord(pin: PinRecord): ProfilePin | null {
 
   const title = type === "album"
     ? (albumTitle ?? value.title ?? value.text)
-    : (trackTitle ?? value.title ?? value.text);
+    : type === "artist"
+      ? (artist ?? value.title ?? value.text)
+      : (trackTitle ?? value.title ?? value.text);
 
   if (!title) return null;
 
@@ -79,21 +89,34 @@ function parsePinRecord(pin: PinRecord): ProfilePin | null {
     id: pin.uri,
     type,
     title,
-    subtitle: artist,
+    subtitle: type === "artist" ? undefined : artist,
   };
 }
 
 export default function StatsPage() {
   const { handle: routeHandle } = useParams<{handle: string;}>();
-  const [filters, setFilters] = useState<PlayFilters>({ ...EMPTY_PLAY_FILTERS });
+  const [searchQuery, setSearchQuery] = useState("");
   const [oauthPending, setOauthPending] = useState(false);
   const [profile, setProfile] = useState<PublicProfile | null>(null);
   const [pinnedFromRepo, setPinnedFromRepo] = useState<ProfilePin[]>([]);
   const [pinsLoading, setPinsLoading] = useState(false);
+  const [pinsReloadKey, setPinsReloadKey] = useState(0);
+  const [pinActionKey, setPinActionKey] = useState<string | null>(null);
+  const [pinError, setPinError] = useState<string | null>(null);
+
+  const [artistQuery, setArtistQuery] = useState("");
+  const [artistResults, setArtistResults] = useState<ArtistSearchResult[]>([]);
+  const [artistSearchLoading, setArtistSearchLoading] = useState(false);
+  const [artistSearchError, setArtistSearchError] = useState<string | null>(null);
+  const [selectedArtist, setSelectedArtist] = useState<ArtistSearchResult | null>(null);
+  const [selectedArtistSongs, setSelectedArtistSongs] = useState<ArtistSongResult[]>([]);
+  const [artistSongsLoading, setArtistSongsLoading] = useState(false);
+  const [artistSongsError, setArtistSongsError] = useState<string | null>(null);
 
   const {
     initializing: authInitializing,
     isAuthenticated,
+    hasOAuthSession,
     sessionDid,
     activeAccount,
     signIn,
@@ -102,34 +125,14 @@ export default function StatsPage() {
   } = useAuth();
 
   const {
-    preferences,
-    ready: preferencesReady,
-    setSavedFilters,
-  } = useUserPreferences(isAuthenticated ? sessionDid : null);
-
-  const {
     records,
     displayRecords,
     loading,
     error,
     progress,
-    showPartialResults,
-    setShowPartialResults,
     lastSyncedAt,
-    cancelFetch,
     resolvedDid,
   } = usePlayRecords(routeHandle);
-
-  useEffect(() => {
-    if (!isAuthenticated || !sessionDid) return;
-    if (!preferencesReady) return;
-    setFilters({ ...preferences.savedFilters.stats });
-  }, [isAuthenticated, preferences.savedFilters.stats, preferencesReady, sessionDid]);
-
-  useEffect(() => {
-    if (!isAuthenticated || !sessionDid || !preferencesReady) return;
-    setSavedFilters("stats", filters);
-  }, [filters, isAuthenticated, preferencesReady, sessionDid, setSavedFilters]);
 
   useEffect(() => {
     let cancelled = false;
@@ -168,7 +171,7 @@ export default function StatsPage() {
 
         while (true) {
           const response = await fetchPinRecords(resolvedDid, cursor, { pds });
-          allPins.push(...(response.records as PinRecord[]));
+          allPins.push(...response.records);
           if (!response.cursor || response.records.length === 0) break;
           cursor = response.cursor;
         }
@@ -180,7 +183,7 @@ export default function StatsPage() {
           .map(parsePinRecord)
           .filter((pin): pin is ProfilePin => Boolean(pin))
           .filter((pin) => {
-            const key = `${pin.type}:${pin.title.toLowerCase()}:${pin.subtitle?.toLowerCase() ?? ""}`;
+            const key = `${pin.type}:${normalizeLabel(pin.title)}:${normalizeLabel(pin.subtitle)}`;
             if (deduped.has(key)) return false;
             deduped.add(key);
             return true;
@@ -201,7 +204,7 @@ export default function StatsPage() {
     return () => {
       cancelled = true;
     };
-  }, [resolvedDid]);
+  }, [pinsReloadKey, resolvedDid]);
 
   const handleOAuthSignIn = async () => {
     const trimmed = routeHandle?.trim();
@@ -215,10 +218,18 @@ export default function StatsPage() {
     }
   };
 
-  const filteredRecords = useMemo(
-    () => filterPlayRecords(displayRecords, filters),
-    [displayRecords, filters]
-  );
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+
+  const filteredRecords = useMemo(() => {
+    if (!normalizedSearch) return displayRecords;
+
+    return displayRecords.filter((record) => {
+      const track = (record.value.trackName ?? "").toLowerCase();
+      const artist = (record.value.artists?.map((item) => item.artistName).join(", ") ?? "").toLowerCase();
+      const album = (record.value.releaseName ?? "").toLowerCase();
+      return track.includes(normalizedSearch) || artist.includes(normalizedSearch) || album.includes(normalizedSearch);
+    });
+  }, [displayRecords, normalizedSearch]);
 
   const progressValue = useMemo(() => {
     if (!progress.estimatedTotal || progress.estimatedTotal <= 0) return 0;
@@ -302,6 +313,122 @@ export default function StatsPage() {
 
   const pinnedAlbums = pinnedFromRepo.filter((item) => item.type === "album");
   const pinnedSongs = pinnedFromRepo.filter((item) => item.type === "song");
+  const pinnedArtists = pinnedFromRepo.filter((item) => item.type === "artist");
+
+  const pinnedSongKeys = useMemo(() => {
+    return new Set(pinnedSongs.map((item) => songPinKey(item.title, item.subtitle ?? "")));
+  }, [pinnedSongs]);
+
+  const pinnedArtistKeys = useMemo(() => {
+    return new Set(pinnedArtists.map((item) => normalizeLabel(item.title)));
+  }, [pinnedArtists]);
+
+  const queuePinReload = () => {
+    if (sessionDid && resolvedDid && sessionDid === resolvedDid) {
+      setPinsReloadKey((current) => current + 1);
+    }
+  };
+
+  const handlePinSong = async (record: PlayRecord) => {
+    if (!sessionDid || !hasOAuthSession) {
+      setPinError("Sign in to pin songs.");
+      return;
+    }
+
+    const trackName = record.value.trackName ?? "Untitled";
+    const artistName = record.value.artists?.map((item) => item.artistName).join(", ") ?? "Unknown";
+    const actionKey = `song:${trackName}:${artistName}`;
+
+    setPinError(null);
+    setPinActionKey(actionKey);
+
+    try {
+      await createPinRecord(sessionDid, {
+        pinType: "song",
+        title: trackName,
+        trackName,
+        artistName,
+        releaseName: record.value.releaseName,
+        originUrl: record.value.originUrl,
+        sourceRecordUri: record.uri,
+      });
+      queuePinReload();
+    } catch (pinRecordError) {
+      setPinError(pinRecordError instanceof Error ? pinRecordError.message : "Failed to pin song");
+    } finally {
+      setPinActionKey((current) => (current === actionKey ? null : current));
+    }
+  };
+
+  const handlePinArtist = async (artistName: string) => {
+    if (!sessionDid || !hasOAuthSession) {
+      setPinError("Sign in to pin artists.");
+      return;
+    }
+
+    const normalizedArtist = artistName.trim();
+    if (!normalizedArtist) return;
+
+    const actionKey = `artist:${normalizedArtist}`;
+    setPinError(null);
+    setPinActionKey(actionKey);
+
+    try {
+      await createPinRecord(sessionDid, {
+        pinType: "artist",
+        title: normalizedArtist,
+        artistName: normalizedArtist,
+      });
+      queuePinReload();
+    } catch (pinRecordError) {
+      setPinError(pinRecordError instanceof Error ? pinRecordError.message : "Failed to pin artist");
+    } finally {
+      setPinActionKey((current) => (current === actionKey ? null : current));
+    }
+  };
+
+  const runArtistSearch = async () => {
+    const trimmed = artistQuery.trim();
+    if (!trimmed) {
+      setArtistResults([]);
+      setArtistSearchError(null);
+      return;
+    }
+
+    setArtistSearchError(null);
+    setArtistSearchLoading(true);
+
+    try {
+      const results = await searchArtists(trimmed);
+      setArtistResults(results);
+    } catch (searchError) {
+      setArtistSearchError(searchError instanceof Error ? searchError.message : "Failed to search artists");
+      setArtistResults([]);
+    } finally {
+      setArtistSearchLoading(false);
+    }
+  };
+
+  const handleArtistSearchSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    void runArtistSearch();
+  };
+
+  const viewArtistSongs = async (artist: ArtistSearchResult) => {
+    setSelectedArtist(artist);
+    setArtistSongsError(null);
+    setArtistSongsLoading(true);
+
+    try {
+      const songs = await fetchArtistSongs(artist.artistId);
+      setSelectedArtistSongs(songs);
+    } catch (songsError) {
+      setArtistSongsError(songsError instanceof Error ? songsError.message : "Failed to load artist songs");
+      setSelectedArtistSongs([]);
+    } finally {
+      setArtistSongsLoading(false);
+    }
+  };
 
   const COLORS = [
     "hsl(var(--primary))",
@@ -356,6 +483,10 @@ export default function StatsPage() {
       <main className="mx-auto max-w-7xl space-y-6 px-4 py-6">
         {authError &&
         <p className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{authError}</p>
+        }
+
+        {pinError &&
+        <p className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{pinError}</p>
         }
 
         <section className="grid gap-4 lg:grid-cols-[1.2fr_2fr]">
@@ -419,71 +550,34 @@ export default function StatsPage() {
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">Filters</CardTitle>
+            <CardTitle className="text-base">Search</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div className="flex gap-2">
               <Input
-                placeholder="Track contains…"
-                value={filters.track}
-                onChange={(e) => setFilters((current) => ({ ...current, track: e.target.value }))}
-              />
-              <Input
-                placeholder="Artist contains…"
-                value={filters.artist}
-                onChange={(e) => setFilters((current) => ({ ...current, artist: e.target.value }))}
-              />
-              <Input
-                placeholder="Album contains…"
-                value={filters.album}
-                onChange={(e) => setFilters((current) => ({ ...current, album: e.target.value }))}
-              />
-            </div>
-            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
-              <Input
-                type="date"
-                value={filters.dateFrom}
-                onChange={(e) => setFilters((current) => ({ ...current, dateFrom: e.target.value }))}
-              />
-              <Input
-                type="date"
-                value={filters.dateTo}
-                onChange={(e) => setFilters((current) => ({ ...current, dateTo: e.target.value }))}
+                placeholder="Search songs, artists, or albums"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
               />
               <Button
                 type="button"
                 variant="ghost"
-                onClick={() => setFilters({ ...EMPTY_PLAY_FILTERS })}
-                disabled={!hasActivePlayFilters(filters)}
+                onClick={() => setSearchQuery("")}
+                disabled={!searchQuery.trim()}
               >
-                Clear filters
+                Clear
               </Button>
             </div>
           </CardContent>
         </Card>
 
-        <div className="flex flex-wrap items-center gap-4 rounded-md border border-border bg-card/40 px-3 py-2">
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="stats-partial-toggle"
-              checked={showPartialResults}
-              onCheckedChange={(value) => setShowPartialResults(value === true)}
-            />
-            <label htmlFor="stats-partial-toggle" className="text-sm text-muted-foreground">
-              Show partial results while syncing
-            </label>
-          </div>
-          {loading &&
-          <Button type="button" variant="outline" size="sm" onClick={cancelFetch}>
-              Cancel sync
-            </Button>
-          }
-          {lastSyncedAt &&
-          <span className="text-xs text-muted-foreground">
+        {lastSyncedAt &&
+        <div className="rounded-md border border-border bg-card/40 px-3 py-2">
+            <span className="text-xs text-muted-foreground">
               Cache updated {new Date(lastSyncedAt).toLocaleString()}
             </span>
-          }
-        </div>
+          </div>
+        }
 
         {loading &&
         <div className="rounded-md border border-border bg-card p-3">
@@ -508,7 +602,7 @@ export default function StatsPage() {
         <p className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</p>
         }
 
-        <section className="grid gap-4 md:grid-cols-2">
+        <section className="grid gap-4 md:grid-cols-3">
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Pinned Albums</CardTitle>
@@ -544,6 +638,108 @@ export default function StatsPage() {
                   {item.subtitle && <p className="text-xs text-muted-foreground">{item.subtitle}</p>}
                 </div>
               )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Pinned Artists</CardTitle>
+              <p className="text-xs text-muted-foreground">Saved in uk.madebydanny.teal.pin</p>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {pinsLoading && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+              {!pinsLoading && pinnedArtists.length === 0 &&
+              <p className="text-sm text-muted-foreground">No pinned artists found.</p>
+              }
+              {pinnedArtists.map((item) =>
+              <div key={item.id} className="rounded-md border border-border bg-muted/30 p-2">
+                  <p className="text-sm font-medium text-foreground">{item.title}</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </section>
+
+        <section>
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg">Artist Search</CardTitle>
+              <p className="text-xs text-muted-foreground">Search artists, pin them, and view songs from the search API</p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <form onSubmit={handleArtistSearchSubmit} className="flex flex-wrap gap-2">
+                <Input
+                  placeholder="Search artist names"
+                  value={artistQuery}
+                  onChange={(event) => setArtistQuery(event.target.value)}
+                  className="min-w-[220px] flex-1"
+                />
+                <Button type="submit" disabled={!artistQuery.trim() || artistSearchLoading}>
+                  {artistSearchLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Search"}
+                </Button>
+              </form>
+
+              {artistSearchError &&
+              <p className="text-sm text-destructive">{artistSearchError}</p>
+              }
+
+              {artistResults.length > 0 &&
+              <div className="space-y-2">
+                  {artistResults.map((artist) => {
+                    const actionKey = `artist:${artist.artistName}`;
+                    const pinned = pinnedArtistKeys.has(normalizeLabel(artist.artistName));
+
+                    return (
+                      <div key={artist.artistId} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border p-2">
+                        <div>
+                          <p className="text-sm font-medium text-foreground">{artist.artistName}</p>
+                          {artist.primaryGenreName &&
+                          <p className="text-xs text-muted-foreground">{artist.primaryGenreName}</p>
+                          }
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button type="button" size="sm" variant="outline" onClick={() => void viewArtistSongs(artist)}>
+                            View songs
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={pinned ? "secondary" : "outline"}
+                            disabled={!hasOAuthSession || pinned || pinActionKey === actionKey}
+                            onClick={() => void handlePinArtist(artist.artistName)}
+                          >
+                            {pinActionKey === actionKey ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pin className="h-4 w-4" />}
+                            {pinned ? "Pinned" : "Pin artist"}
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              }
+
+              {selectedArtist &&
+              <div className="space-y-2 rounded-md border border-border p-3">
+                  <p className="text-sm font-semibold text-foreground">Songs by {selectedArtist.artistName}</p>
+                  {artistSongsLoading && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+                  {artistSongsError && <p className="text-sm text-destructive">{artistSongsError}</p>}
+                  {!artistSongsLoading && !artistSongsError && selectedArtistSongs.length === 0 &&
+                  <p className="text-sm text-muted-foreground">No songs found.</p>
+                  }
+                  {!artistSongsLoading && selectedArtistSongs.length > 0 &&
+                  <div className="space-y-1">
+                      {selectedArtistSongs.slice(0, 20).map((song) =>
+                      <div key={song.trackId} className="rounded-md bg-muted/30 px-2 py-1.5">
+                          <p className="text-sm text-foreground">{song.trackName}</p>
+                          {song.collectionName &&
+                          <p className="text-xs text-muted-foreground">{song.collectionName}</p>
+                          }
+                        </div>
+                      )}
+                    </div>
+                  }
+                </div>
+              }
             </CardContent>
           </Card>
         </section>
@@ -632,13 +828,48 @@ export default function StatsPage() {
                 </div>
               }
 
-              {!loading && filteredRecords.length === 0 && hasActivePlayFilters(filters) &&
-              <p className="text-sm text-muted-foreground">No plays match the current filters.</p>
+              {!loading && filteredRecords.length === 0 && searchQuery.trim() &&
+              <p className="text-sm text-muted-foreground">No plays match your search.</p>
               }
 
-              {filteredRecords.map((record) =>
-              <PlayCard key={record.uri} record={record} />
-              )}
+              {filteredRecords.map((record) => {
+                const trackName = record.value.trackName ?? "Untitled";
+                const artistName = record.value.artists?.map((item) => item.artistName).join(", ") ?? "Unknown";
+                const songKey = songPinKey(trackName, artistName);
+                const songPinned = pinnedSongKeys.has(songKey);
+                const artistPinned = pinnedArtistKeys.has(normalizeLabel(artistName));
+                const songActionKey = `song:${trackName}:${artistName}`;
+                const artistActionKey = `artist:${artistName}`;
+
+                return (
+                  <div key={record.uri} className="rounded-md border border-border/60 p-2">
+                    <PlayCard record={record} />
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={songPinned ? "secondary" : "outline"}
+                        disabled={!hasOAuthSession || songPinned || pinActionKey === songActionKey}
+                        onClick={() => void handlePinSong(record)}
+                      >
+                        {pinActionKey === songActionKey ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pin className="h-4 w-4" />}
+                        {songPinned ? "Pinned song" : "Pin song"}
+                      </Button>
+
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={artistPinned ? "secondary" : "outline"}
+                        disabled={!hasOAuthSession || artistPinned || pinActionKey === artistActionKey}
+                        onClick={() => void handlePinArtist(artistName)}
+                      >
+                        {pinActionKey === artistActionKey ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pin className="h-4 w-4" />}
+                        {artistPinned ? "Pinned artist" : "Pin artist"}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
 
               {displayRecords.length > 0 && !loading &&
               <p className="pt-2 text-center text-xs text-muted-foreground">
