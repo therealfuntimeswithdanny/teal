@@ -8,7 +8,7 @@ function trimTrailingSlash(value: string): string {
 
 const runtimeOrigin = typeof window !== "undefined"
   ? window.location.origin
-  : "https://teal-stats.madebydanny.uk";
+  : "https://teal-stats.vercel.app";
 
 export const APP_ORIGIN = trimTrailingSlash(import.meta.env.VITE_APP_ORIGIN || runtimeOrigin);
 export const ATPROTO_OAUTH_ORIGIN = trimTrailingSlash(
