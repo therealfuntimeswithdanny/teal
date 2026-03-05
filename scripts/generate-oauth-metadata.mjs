@@ -6,7 +6,7 @@ function trimTrailingSlash(value) {
 }
 
 const appOrigin = trimTrailingSlash(
-  process.env.VITE_APP_ORIGIN || "https://teal-stats.madebydanny.uk"
+  process.env.VITE_APP_ORIGIN || "https://teal-stats.vercel.app"
 );
 const oauthOrigin = trimTrailingSlash(
   process.env.VITE_ATPROTO_OAUTH_ORIGIN || appOrigin
