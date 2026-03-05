@@ -76,7 +76,7 @@ Steps:
 2. In Vercel, click **Add New Project** and import the repo.
 3. Keep the detected framework as **Vite**.
 4. Add any required environment variables:
-   - `VITE_APP_ORIGIN` (for example: `https://teal-stats.madebydanny.uk`)
+   - `VITE_APP_ORIGIN` (for example: `https://teal-stats.vercel.app`)
    - `VITE_ATPROTO_OAUTH_ORIGIN` (for example: `https://your-project-name.vercel.app`)
    - `VITE_ATPROTO_CLIENT_ID` (for example: `https://your-project-name.vercel.app/oauth/client-metadata.json`)
    - `VITE_ATPROTO_REDIRECT_URI` (for example: `https://your-project-name.vercel.app/oauth/callback`)
@@ -91,7 +91,7 @@ OAuth metadata is generated at build time (`npm run oauth:metadata` / `prebuild`
 
 For this setup:
 
-- App domain: `https://teal-stats.madebydanny.uk`
+- App domain: `https://teal-stats.vercel.app`
 - OAuth domain: `https://your-project-name.vercel.app`
 - Client metadata URL: `https://your-project-name.vercel.app/oauth/client-metadata.json`
 - Callback URL: `https://your-project-name.vercel.app/oauth/callback`
@@ -99,7 +99,7 @@ For this setup:
 
 Note: browser OAuth session storage is origin-scoped. With this bridge setup,
 the persisted OAuth session is stored on the OAuth origin (`*.vercel.app`),
-then the user is redirected back to the app origin (`teal-stats.madebydanny.uk`).
+which keeps sign-in and callback on `teal-stats.vercel.app`.
 
 Make sure both paths are reachable after deploy (they are provided by:
 
@@ -112,8 +112,7 @@ If you still see this OAuth error:
 - `Forbidden sec-fetch-site header "same-site"`
 
 your app origin is considered "same-site" with the auth server/PDS. This is
-rejected by the server. Using a Vercel domain for OAuth with your app hosted on
-`teal-stats.madebydanny.uk` avoids that by making the OAuth requests cross-site.
+rejected by the server. Keeping both app and OAuth URLs on your Vercel domain avoids old cross-domain redirect issues.
 
 ### Deploy with Lovable
 
