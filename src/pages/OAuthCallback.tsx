@@ -2,11 +2,11 @@ import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { ATPROTO_ALLOWED_RETURN_ORIGINS } from "@/lib/oauth";
+import { APP_ORIGIN } from "@/lib/oauth";
 
-function isAllowedReturnOrigin(url: URL): boolean {
+function isAppReturnOrigin(url: URL): boolean {
   const origin = url.origin.replace(/\/$/, "");
-  return ATPROTO_ALLOWED_RETURN_ORIGINS.includes(origin);
+  return origin === APP_ORIGIN;
 }
 
 export default function OAuthCallback() {
@@ -24,7 +24,7 @@ export default function OAuthCallback() {
 
       try {
         const external = new URL(callbackState);
-        if (isAllowedReturnOrigin(external)) {
+        if (isAppReturnOrigin(external)) {
           if (!external.searchParams.has("did")) {
             external.searchParams.set("did", sessionDid);
           }

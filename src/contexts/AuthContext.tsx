@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { fetchPublicProfile } from "@/lib/atproto";
-import { ATPROTO_OAUTH_ORIGIN, getOAuthClient } from "@/lib/oauth";
+import { APP_ORIGIN, ATPROTO_OAUTH_ORIGIN, getOAuthClient } from "@/lib/oauth";
 import {
   AuthAccount,
   clearPendingHandle,
@@ -154,9 +154,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (typeof window !== "undefined") {
       const currentOrigin = window.location.origin;
       if (ATPROTO_OAUTH_ORIGIN && ATPROTO_OAUTH_ORIGIN !== currentOrigin) {
-        const returnTo = state
-          ? new URL(state, currentOrigin).toString()
-          : window.location.href;
+        const resolvedState = state ? new URL(state, currentOrigin) : new URL(window.location.href);
+        const returnTo = resolvedState.origin === APP_ORIGIN
+          ? resolvedState.toString()
+          : APP_ORIGIN;
         const startUrl = new URL("/oauth/start", ATPROTO_OAUTH_ORIGIN);
         startUrl.searchParams.set("handle", normalized);
         startUrl.searchParams.set("return_to", returnTo);
