@@ -6,11 +6,9 @@ function trimTrailingSlash(value: string): string {
   return value.endsWith("/") ? value.slice(0, -1) : value;
 }
 
-const runtimeOrigin = typeof window !== "undefined"
-  ? window.location.origin
-  : "https://teal-stats.vercel.app";
+const DEFAULT_APP_ORIGIN = "https://teal-stats.vercel.app";
 
-export const APP_ORIGIN = trimTrailingSlash(import.meta.env.VITE_APP_ORIGIN || runtimeOrigin);
+export const APP_ORIGIN = trimTrailingSlash(import.meta.env.VITE_APP_ORIGIN || DEFAULT_APP_ORIGIN);
 export const ATPROTO_OAUTH_ORIGIN = trimTrailingSlash(
   import.meta.env.VITE_ATPROTO_OAUTH_ORIGIN || APP_ORIGIN
 );
