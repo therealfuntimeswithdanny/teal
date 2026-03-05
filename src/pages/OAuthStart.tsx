@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { APP_ORIGIN, ATPROTO_ALLOWED_RETURN_ORIGINS } from "@/lib/oauth";
+import { APP_ORIGIN } from "@/lib/oauth";
 
 function normalizeReturnTo(input: string | null): string {
   if (!input) return APP_ORIGIN;
   try {
     const candidate = new URL(input);
     const origin = candidate.origin.replace(/\/$/, "");
-    if (!ATPROTO_ALLOWED_RETURN_ORIGINS.includes(origin)) {
+    if (origin !== APP_ORIGIN) {
       return APP_ORIGIN;
     }
     return candidate.toString();
